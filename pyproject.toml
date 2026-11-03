@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recon-agent"
+description = "Inventory reconciliation agent for MIPS, WMS and Oracle (ODI): exception worklist and engine"
+readme = "README.md"
+requires-python = ">=3.12"
+dynamic = ["version", "dependencies"]
+
+[project.scripts]
+recon-agent = "recon_agent.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "recon_agent.__version__" }
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["recon_agent*"]
+
+[tool.setuptools.package-data]
+"recon_agent.web" = ["templates/*.html", "static/*", "static/fonts/*"]
+"recon_agent.simulator" = ["templates/*.html", "static/*"]
