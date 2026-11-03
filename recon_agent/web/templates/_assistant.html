@@ -1,0 +1,25 @@
+{% from "_macros.html" import icon %}
+<aside id="assistant" class="assistant" aria-labelledby="assistant-h" hidden>
+  <header class="assistant-head">
+    <h2 id="assistant-h">Ask about the reconciliation</h2>
+    <button type="button" class="btn btn--quiet btn--icon" data-assistant-close>{{ icon("x", "Close assistant") }}</button>
+  </header>
+  <p class="assistant-note">
+    {% if ai_available %}Answers come only from the Reconciliation API: positions, flags and decisions. {{ config.OCI_MODEL_ID }} on OCI Generative AI writes the words; every number is the engine's.
+    {% else %}The AI assistant isn't connected here. Name a SKU number or part of an item name and you'll get the engine's data for it.{% endif %}
+  </p>
+  <form class="ask" hx-post="/ask" hx-target="#answers" hx-swap="afterbegin" hx-disabled-elt="find button"
+        hx-on::after-request="if(event.detail.successful){this.reset()}">
+    <label for="question" class="sr">Question</label>
+    <textarea id="question" name="question" rows="3" required maxlength="500" placeholder="Why is MIPS asking for more 150080?"></textarea>
+    <div class="ask-row">
+      <span class="ask-try">Try
+        <button type="button" class="link" data-ask="Why is MIPS asking for more 150080?">150080</button>
+        <button type="button" class="link" data-ask="What happened with the recovery run on 8526?">8526</button>
+        <button type="button" class="link" data-ask="Show me the hot dog buns">hot dog buns</button>
+      </span>
+      <button class="btn btn--primary btn--sm" type="submit">Ask</button>
+    </div>
+  </form>
+  <div id="answers" class="answers" aria-live="polite"></div>
+</aside>

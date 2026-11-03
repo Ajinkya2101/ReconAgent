@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block body %}
+{% include "_strip.html" %}
+<main class="signin">
+  <h1>No open row for “{{ key }}”</h1>
+  <p>That SKU has no flags in the current run. It may reconcile cleanly, or the link may come from an older alert whose flag was decided.</p>
+  <a class="btn btn--primary" href="/">Back to the worklist</a>
+</main>
+{% endblock %}

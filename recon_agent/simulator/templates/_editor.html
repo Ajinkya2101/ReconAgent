@@ -1,0 +1,63 @@
+{% macro field(col, kind, i) -%}
+{%- set v = field_value(values.get(col), kind) %}{% set derived = col in DERIVED[e.name] %}{% set is_key = col == e.key -%}
+<label class="fld{% if derived %} fld--derived{% endif %}{% if is_key %} fld--key{% endif %}">
+  <span class="fld-name">{{ col }}{% if col in e.required %}<abbr title="required">*</abbr>{% endif %}{% if derived %} <small>auto</small>{% endif %}</span>
+  {% if kind == "bool" -%}
+  <select name="f{{ i }}">
+    <option value=""{% if v == "" %} selected{% endif %}>—</option>
+    <option value="true"{% if v == "true" %} selected{% endif %}>Yes</option>
+    <option value="false"{% if v == "false" %} selected{% endif %}>No</option>
+  </select>
+  {%- else -%}
+  <input name="f{{ i }}" value="{{ v }}"{% if kind == "date" %} type="date"{% elif kind == "datetime" %} type="datetime-local" step="1"{% elif kind == "number" %} inputmode="decimal"{% endif %}{% if is_key and mode == "edit" %} readonly{% endif %}{% if derived %} data-derived readonly{% endif %} autocomplete="off" spellcheck="false">
+  {%- endif %}
+</label>
+{%- endmacro %}
+<div class="editor" data-key="{{ key or '' }}">
+  {% if message %}<p class="notice notice--ok" role="status">{{ message }}</p>{% endif %}
+  {% if error %}<p class="notice notice--err" role="alert">{{ error }}</p>{% endif %}
+
+  {% if mode in ("edit", "new") %}
+  {% set cols = e.columns.items()|list %}
+  {% set main = [e.key] + e.summary|list %}
+  <form class="editor-form" hx-target="#editor"
+        hx-post="{% if mode == 'edit' %}/t/{{ e.name }}/edit/{{ key|urlencode }}{% else %}/t/{{ e.name }}/new{% endif %}">
+    <header class="editor-head">
+      <h2>{% if mode == "edit" %}<span class="code">{{ key }}</span>{% else %}New {{ e.label|lower }} row{% endif %}</h2>
+      <p>{{ e.source }} · <span class="code">{{ e.name }}</span>{% if mode == "edit" %} · last change S{{ base_seq }}{% endif %}</p>
+    </header>
+    <input type="hidden" name="base_seq" value="{{ base_seq }}">
+
+    <div class="fields">
+      {% for col, kind in cols if col in main %}{{ field(col, kind, (e.columns|list).index(col)) }}{% endfor %}
+    </div>
+    <details class="more">
+      <summary>All other columns ({{ cols|length - main|length }})</summary>
+      <div class="fields">
+        {% for col, kind in cols if col not in main %}{{ field(col, kind, (e.columns|list).index(col)) }}{% endfor %}
+      </div>
+    </details>
+
+    <label class="check"><input type="checkbox" name="derive" value="1" checked data-derive>
+      Recompute <span title="{{ DERIVED[e.name]|join(', ') }}">{{ DERIVED[e.name]|length }} derived column{{ "s" if DERIVED[e.name]|length != 1 }}</span> as the source system would</label>
+    <label class="fld fld--note"><span class="fld-name">Note <small>shown in the event log</small></span>
+      <input name="note" maxlength="200" placeholder="Why, e.g. customer raised the order" autocomplete="off"></label>
+
+    <div class="editor-actions">
+      <button class="btn btn--primary" type="submit">{% if mode == "edit" %}Publish change{% else %}Insert row{% endif %}</button>
+      {% if mode == "edit" %}
+      <button type="button" class="btn" hx-get="/t/{{ e.name }}/new?clone={{ key|urlencode }}">Copy as new row</button>
+      {% if e.name == "wms.order" %}
+      <button type="button" class="btn" hx-post="/t/wms.order/recalc/{{ key|urlencode }}" title="Set Order Qty and Allocated Qty to the sum of this customer's item lines">Rebuild totals from item lines</button>
+      {% endif %}
+      <button type="button" class="btn btn--danger" hx-post="/t/{{ e.name }}/delete/{{ key|urlencode }}" hx-include="closest form" hx-confirm="Delete {{ key }}? This publishes a delete event.">Delete</button>
+      {% endif %}
+    </div>
+  </form>
+  {% elif mode == "none" %}
+  <div class="editor-empty">
+    <p><b>Pick a row</b> to change it, or add a new row.</p>
+    <p>Each change publishes one event. The worklist reconciles it within a second and its open screens are told at once.</p>
+  </div>
+  {% endif %}
+</div>

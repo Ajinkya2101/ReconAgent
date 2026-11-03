@@ -1,0 +1,246 @@
+3 systems: 
+MIPS - Plans prod, holds customer orders and prod schedule
+ODI - Records prod, holds quantity that each prod run made
+WMS - Controls warehouse, holds customer orders, stock allocations and shipments 
+
+These 3 systems frequently show diff quantities for the same prod, today people manually compare screens between MIPS and WMS. 
+Slow process, requires domain expertise and human intervention. 
+
+---------------------------------------------------------------
+
+When 3 systems out of sync, problems:
+- Plant makes more of what prod already exists (over prod).
+- Surplus prod stays on one sales day and not used on next sales day
+- Warehouse ships stock that MIPS doesn't know of
+- Oracle / ODI has no idea of shipments, finance cannot close periods correctly 
+
+---------------------------------------------------------------
+
+Reconciliation Agent, Solution:
+Compares data from three systems for each product (SKU) and each sales day. 
+Steps:
+1. Calculate one current position for each SKU
+2. 17 fixed rules to find mismatch between systems
+3. Flags each mismatch, flag tells you the problem, system that is wrong or out of sync and the correction. 
+4. Puts the flags in sequence. Flag with largest retail value at risk is first priority
+5. Records each planner decision, uses decisions to change the sequence of subsequent flags
+
+---------------------------------------------------------------
+
+Main principles
+- Rules calculate, AI explains 
+Rules calculate each quantity, AI explains the 
+- Agent adds all demand before it applies inventory, all MIPS order lines get added for a SKU first only then agent applies inventory. Prevents over-production.
+- Agent gives corrections, not just differences. For example: "Apply the 1,200 units to the active sales-order lines and decrease the production requirement to 800."
+- Business person makes the final decision, phase 1 only proposes changes with accept or reject options.
+
+---------------------------------------------------------------
+
+Problem Identification:
+Step 1: Input data
+Agent reads data from 5 sources each sales day; MIPS Order Data, ODI Finished Goods Data, ODI Batch Data, WMS Fill Rate Report, WMS Order Summary Report by Item. 
+
+Step 2: Reconciled Position
+Agent uses this equation;
+Net requirement = Total demand (all MIPS lines)
+                − Inventory applied
+                − Completed production (wrapped units, all runs)
+                + Returns and adjustments
+- A positive net requirement is the quantity that the plant must still make.
+- A negative net requirement is a surplus. You must carry it forward to the next sales day.
+
+Step 3: Rules
+R01(H) - MIPS applied the inventory to the first order line only. The other lines can cause over-production.
+
+R02(M) - MIPS subtracted inventory, but it did not record the inventory. Nobody can trace it.
+
+R03(L) - A production line has zero quantity and zero output (a "blind" line).
+
+R04(M) - A production run moved to a different line. A zero-quantity copy stays on the old line.
+
+R05(H) - A recovery run made more than the remaining demand.
+
+R06(M) - Surplus production did not move to the next demand.
+
+R07(H) - WMS shipped stock that MIPS cannot see (for example, freezer stock).
+
+R08(M) - Inventory is more than demand. The net order is negative.
+
+R09(M) - The MIPS order quantity and the WMS order quantity are different.
+
+R10(M) - WMS allocated less than the order quantity.
+
+R11(M) - MIPS and WMS use different units per container for the same SKU.
+
+R12(H) - WMS shows orders as shipped, but no trailer load scan occurred.
+
+R13(M) - Two WMS reports show different totals.
+
+R14(L) - The batches mixed are different from the MIPS schedule.
+
+R15(L) - The SKU number has a different format in one source system (for example, extra spaces).
+
+R16(M) - The ODI copy of the MIPS order quantity is different from MIPS.
+
+R17(M) - A value is very different from the plant median. It can be a data-entry error.
+
+Some rules change the severity for large quantities. For example, R05 is High at 1,000 units or more, and Medium below 1,000 units.
+
+NOTE: Two more rules (R18 and R19) are in the plan. R18 finds WMS transactions that do not get to Oracle in 10 minutes. R19 finds returns that do not decrease the received quantity. These rules need real-time data. Thus, they are not in the current version.
+
+Step 4: Priority
+The agent puts the flags in sequence by priority. The flag with the highest priority is first.
+Priority = (Retail value at risk + base value) × Severity weight × Rule confidence
+
+Severity| Weight
+--------|--------
+High	| 3
+Medium	| 2
+Low	    | 1
+
+- The retail value at risk is the number of units multiplied by the retail price of the SKU.
+- The base value makes sure that flags with no dollar value (for example, R12) also get a position in the sequence.
+- Rule confidence starts at 1.0.
+
+Step 5: Explanations
+Each flag has an explanation text. The explanation can come from two sources:
+
+- Rule text. The rule writes the text. This text is always available.
+- AI explanation. An AI model (Gemini 2.5 Pro on OCI Generative AI) writes the text. It also gives a root cause and an owner.
+
+The label above each explanation tells you the source. If the AI model is not available, the agent uses the rule text. The agent continues to operate correctly without the AI model.
+
+---------------------------------------------------------------
+
+Procedures
+1 - Sign in
+- Open the worklist address in a web browser. Your IT team gives you this address (for example, http://localhost:8001/).
+- On the "Who's on shift?" screen, type your name in the Name box.
+- Select your role: Planner, Supervisor or Manager.
+- Push Open the worklist.
+- Result: The Exception worklist opens.
+
+NOTE: The agent puts your name on each claim, acknowledgment and decision. Use your real name. In production, the plant sign-in system (OCI IAM Identity Domains) will replace this screen.
+
+2 - Read the shift briefing
+- Find the Shift briefing area at the top of the queue.
+- Read the first sentence.
+- To see all of the briefing, push Read briefing.
+- Read the briefing text and the Top actions list.
+- To open the SKU of an action, push the SKU number at the start of that action.
+- When you complete the briefing, push Mark read.
+- Result: The briefing closes. It stays closed on this computer until the agent loads new data.
+
+To read the briefing again, push Read again.
+
+3 - Find a row
+To show the rows for one sales day:
+- Push the tile of that sales day.
+
+To show all sales days:
+- Push All open days.
+
+To show a specified group of rows:
+
+- Push one of the view tabs:
+	- Open: rows with one or more open flags.
+	- Needs acknowledgment: rows with a High flag that nobody acknowledged.
+	- Claimed by me: rows that you claimed.
+	- Decided: rows where all flags have a decision.
+
+To find a SKU or an item:
+- Push the / key, or push the search box.
+- Type the SKU number or a part of the item name (for example, 150080 or brioche).
+Result: The queue shows only the rows that match.
+
+To move in the queue with the keyboard:
+1. Push j to go to the next row.
+2. Push k to go to the previous row.
+3. Push Enter to open the row.
+4. Push Esc to close the detail.
+
+4 - Examine a row
+- Push the row in the queue.
+Result: The detail area shows the row.
+
+- Read the Reconciled position equation:
+	- Demand, all MIPS lines.
+	- Minus inventory applied.
+	- Minus completed production.
+	- Plus returns and adjustments.
+	- Equals the quantity to make, or the surplus to carry forward.
+
+- Read the bar. It shows inventory (grey), wrapped units, and the demand mark on one scale. A surplus shows after the demand mark. A shortage shows before it.
+- Read the systems table. It shows the MIPS, ODI and WMS quantities on the same scale.
+- Read each flag in the Flags area. Each flag shows:
+	- The severity, the rule code and the title.
+	- The units and the dollar value.
+	- The explanation (rule text or AI explanation).
+	- The owner and the root cause (or scenario).
+	- The evidence values.
+- To see the original records, push Source records.
+Result: The screen shows the MIPS schedule lines, the ODI production runs and the WMS customer orders for this SKU.
+
+5 - Claim a row
+Claim a row to tell other supervisors that you work on it.
+ - Open the row.
+ - Push Claim.
+Result: The detail shows "Claimed by you". The queue shows your initials on the row. The row shows in your Claimed by me view.
+
+To release the claim:
+ - Open the row.
+ - Push Release.
+NOTE: If a different person claimed the row, the detail shows the name of that person. You can still make a decision. The agent then records your name, not the name of the other person.
+
+6 - Acknowledge a High flag
+You must acknowledge each High flag in 15 minutes.
+- Push the Needs acknowledgment tab.
+- Open the row.
+- Find the flag that shows "acknowledge by HH:MM".
+- Push Acknowledge.
+Result: The flag shows "Acknowledged by (your name) at (time)".
+
+CAUTION: If nobody acknowledges a High flag in 15 minutes, the flag becomes overdue. The plan sends overdue flags to the plant productivity manager.
+
+7 - Accept or reject a flag
+- Open the row.
+- Read the flag, the evidence and the source records.
+- Make sure that you have the current data. Refer to Section 6.2.
+- If necessary, type a note in the Note for the next shift box. Write what you examined or changed.
+- Do one of these steps:
+	- If the flag is correct, push Accept.
+	- If the flag is not correct, push Reject.
+Result for Accept: The flag shows "Accepted". The status is "awaiting correction in the source system".
+
+Result for Reject: The flag shows "Rejected". The agent decreases the confidence of the rule. On the next run, the agent does not show this flag again if the quantity stays the same.
+
+- If you accepted the flag, make the correction in the source system. The text below Accept tells you the system (for example, MIPS).
+CAUTION: In Phase 1, Accept does not change MIPS, WMS or Oracle. You must make the correction in the source system manually. If you do not, the problem stays.
+
+To change a decision:
+	- Open the row.
+	- Push Change decision below the flag.
+	- Push Reject instead or Accept instead.
+
+8 - Carry surplus forward
+Rules R05, R06 and R08 find surplus units. When you accept one of these flags, the agent shows the carry-forward:
+ - Accept the flag. Refer to Section 7.
+Result: The flag shows "Carry N units (today's tag) → (next sales day tag)". The bar color changes to the tag of the next sales day. The sales-day filter shows a tile for the next sales day with "carried in · awaiting MIPS correction".
+
+- In MIPS, add the surplus units as beginning inventory for the next sales day.
+- In MIPS, decrease the production requirement for the next sales day by the same quantity.
+NOTE: The current sales-day calendar (Monday to Saturday) is provisional. The plant must confirm it.
+
+9 - Ask the assistant a question
+- Push Ask in the top strip.
+- Type your question in the box. Use 500 characters or less. For example: Why is MIPS asking for more 150080?
+- Push Ask.
+Result: The answer shows below the box. The answer gives links to the related rows.
+- To open a row from the answer, push the link.
+- To close the assistant, push the X button or push Esc.
+
+NOTE: If the AI model is connected, the AI writes the answer. It gets all numbers from the agent data. If the AI model is not connected, the assistant shows the agent data for the SKU numbers or the item names in your question.
+
+10 - Sign out
+Push the sign-out button next to your name in the top strip.
+Result: The sign-in screen opens.

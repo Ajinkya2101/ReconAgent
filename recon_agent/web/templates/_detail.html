@@ -1,0 +1,149 @@
+{% from "_macros.html" import icon, tag, severity, money_or_dash %}
+{% set L = ledger(row) %}
+{% set today = day_tag(row.sales_date) %}
+{% set n_open = row.open_flags|length %}
+{% set mine = row.claim and row.claim.user == user.name %}
+<article class="detail" data-key="{{ row.key }}" aria-labelledby="detail-h">
+  <header class="detail-head">
+    <a class="detail-back btn btn--quiet btn--sm" href="/" data-close-detail>{{ icon("back") }}Queue</a>
+    <div class="detail-id">
+      {{ tag(row.sales_date, "tag--lg") }}
+      <h2 id="detail-h"><span class="code">{{ row.sku or "PLANT" }}</span> <span class="detail-item">{{ row.description }}</span></h2>
+    </div>
+    <div class="detail-money">
+      <span class="detail-dollars">{{ money_or_dash(row.dollars) }}</span>
+      <span class="detail-cap">{% if n_open > 1 %}largest of {{ n_open }} open flags{% elif n_open == 1 %}1 open flag{% else %}all {{ row.flags|length }} flags decided{% endif %}</span>
+    </div>
+    <div class="claim" id="claim">
+      {% if not row.claim %}
+      <button class="btn btn--sm" hx-post="/row/{{ row.key }}/claim" hx-target="#detail">{{ icon("claim") }}Claim</button>
+      <span class="claim-note">Let other supervisors see you're on it</span>
+      {% elif mine %}
+      <span class="claim-state">{{ icon("claim") }}Claimed by you · {{ row.claim.at|hm }}</span>
+      <button class="btn btn--quiet btn--sm" hx-post="/row/{{ row.key }}/release" hx-target="#detail">Release</button>
+      {% else %}
+      <span class="claim-state claim-state--other">{{ icon("claim") }}Claimed by {{ row.claim.user }} · {{ row.claim.at|hm }}</span>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if L %}
+  <section class="ledger" aria-labelledby="ledger-h">
+    <h3 id="ledger-h">Reconciled position</h3>
+    <dl class="equation">
+      <div class="eq-row">
+        <dt><span class="eq-op" aria-hidden="true"></span>Demand, all {{ L.lines }} MIPS {{ "line" if L.lines == 1 else "lines" }}
+          <small>sales orders {{ L.sales_orders|num }} · supply plan {{ L.supply_plan|num }}{% if L.moved %} · {{ L.moved|num }} on moved lines{% endif %}</small></dt>
+        <dd>{{ L.demand|num }}</dd>
+      </div>
+      <div class="eq-row">
+        <dt><span class="eq-op" aria-hidden="true">−</span>Inventory applied <small>MIPS, netted before production</small></dt>
+        <dd>{{ L.inventory|num }}</dd>
+      </div>
+      <div class="eq-row">
+        <dt><span class="eq-op" aria-hidden="true">−</span>Completed production <small>ODI wrapped, all runs</small></dt>
+        <dd>{{ L.wrapped|num }}</dd>
+      </div>
+      {% if store.feed.mode == "events" %}
+      <div class="eq-row">
+        <dt><span class="eq-op" aria-hidden="true">+</span>Returns to plant <small>WMS, returned units are not usable supply</small></dt>
+        <dd>{{ row.position.returns|num }}</dd>
+      </div>
+      {% else %}
+      <div class="eq-row eq-row--missing">
+        <dt><span class="eq-op" aria-hidden="true">+</span>Returns and adjustments <small>needs the WMS return-to-plant feed; not in today's extracts</small></dt>
+        <dd>—</dd>
+      </div>
+      {% endif %}
+      <div class="eq-row eq-row--total">
+        <dt><span class="eq-op" aria-hidden="true">=</span>{% if L.net < 0 %}Surplus to carry forward{% elif L.net > 0 %}Still to produce{% else %}Net requirement{% endif %}</dt>
+        <dd>{{ L.net|abs|num }}</dd>
+      </div>
+    </dl>
+
+    {% set next = day_tag(L.next_day) %}
+    <figure class="track{% if row.carry_accepted %} is-retagged{% endif %}{% if retag_now %} retag-now{% endif %}"
+            style="--from:{{ today.fill }};--to:{{ next.fill }};--demand:{{ L.pct.demand }}%">
+      <figcaption class="sr">Supply against demand on one scale: inventory {{ L.inventory|num }}, wrapped {{ L.wrapped|num }}, demand {{ L.demand|num }}{% if L.surplus %}, surplus {{ L.surplus|num }}{% endif %}{% if L.short %}, short {{ L.short|num }}{% endif %}.</figcaption>
+      <div class="track-bar" aria-hidden="true">
+        <span class="seg seg--inv" style="left:0;width:{{ L.pct.inv }}%"></span>
+        <span class="seg seg--wrap" style="left:{{ L.pct.inv }}%;width:{{ L.pct.wrap }}%"></span>
+        {% if L.short %}<span class="seg seg--short" style="left:{{ L.pct.inv + L.pct.wrap }}%;width:{{ L.pct.short }}%"></span>{% endif %}
+        {% if L.surplus %}<span class="seg seg--surplus{% if today.fill == '#ffffff' or next.fill == '#ffffff' %} is-white{% endif %}" style="left:{{ L.pct.demand }}%;width:{{ L.pct.surplus }}%"></span>{% endif %}
+        <span class="track-end" style="left:{{ L.pct.demand }}%"></span>
+      </div>
+      <div class="track-legend" aria-hidden="true">
+        <span><i class="key key--inv"></i>Inventory {{ L.inventory|num }}</span>
+        <span><i class="key key--wrap"></i>Wrapped {{ L.wrapped|num }}</span>
+        <span class="track-demand-label">Demand {{ L.demand|num }}</span>
+        {% if L.surplus %}
+        <span class="track-carry">
+          {% if row.carry_accepted %}Carried {{ L.surplus|num }} {{ icon("arrow") }} {{ tag(L.next_day, "tag--xs") }}<em>awaiting MIPS correction</em>
+          {% else %}Surplus {{ L.surplus|num }} still on {{ tag(row.sales_date, "tag--xs") }}{% endif %}
+        </span>
+        {% elif L.short %}
+        <span><i class="key key--short"></i>Short {{ L.short|num }}</span>
+        {% endif %}
+      </div>
+    </figure>
+
+    <table class="systems">
+      <caption class="sr">Each system's quantity on the same scale as demand</caption>
+      <tbody>
+        {% for s in L.systems %}
+        <tr>
+          <th scope="row"><span class="code">{{ s.system }}</span> {{ s.label }}</th>
+          <td class="systems-bar" aria-hidden="true"><span class="bar" style="width:{{ s.pct }}%"></span><span class="bar-mark" style="left:{{ L.pct.demand }}%"></span></td>
+          <td class="num">{{ s.value|num }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  <section class="flags" aria-labelledby="flags-h">
+    <h3 id="flags-h">Flags <span class="count">{{ row.flags|length }}</span></h3>
+    {% for f in row.flags %}{% include "_flag.html" %}{% endfor %}
+  </section>
+
+  {% set p = row.position %}
+  {% if p and (p.lines or p.runs or p.wms) %}
+  <details class="sources">
+    <summary>{{ icon("down") }}Source records <span>{{ p.lines|length }} MIPS lines · {{ p.runs|length }} ODI runs · {{ p.wms.orders|length if p.wms else 0 }} WMS orders</span></summary>
+    {% if p.lines %}
+    <table class="records">
+      <caption>MIPS schedule lines</caption>
+      <thead><tr><th scope="col">Sales day</th><th scope="col">Type</th><th scope="col">Moved</th><th scope="col" class="num">Qty</th><th scope="col">Modified</th></tr></thead>
+      <tbody>
+        {% for l in p.lines %}
+        <tr><td>{{ tag(l.offset_sales_date, "tag--xs") }}</td><td>{{ "Sales order" if l.is_sales_order else "Supply plan" }} <span class="code">{{ l.source_system }}</span></td><td>{{ "Yes" if l.order_moved else "No" }}</td><td class="num">{{ l.order_qty|num }}</td><td>{{ l.last_modified.strftime("%m/%d %H:%M") if l.last_modified else "—" }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if p.runs %}
+    <table class="records">
+      <caption>ODI production runs</caption>
+      <thead><tr><th scope="col">Run</th><th scope="col">Line · shift</th><th scope="col">Start</th><th scope="col" class="num">Ordered</th><th scope="col" class="num">Wrapped</th><th scope="col" class="num">Ending inv.</th></tr></thead>
+      <tbody>
+        {% for r in p.runs %}
+        <tr><td class="code">{{ r.formula_type }}</td><td>{{ r.line }}{% if r.shift %} · {{ r.shift }}{% endif %}</td><td>{{ r.start.strftime("%m/%d %H:%M") if r.start else "—" }}</td><td class="num">{{ r.net_units_ordered|num }}</td><td class="num">{{ r.wrapped_units|num }}</td><td class="num">{{ r.expected_ending_inventory|num }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if p.wms and p.wms.orders %}
+    <table class="records">
+      <caption>WMS customer orders</caption>
+      <thead><tr><th scope="col">Customer</th><th scope="col">Status</th><th scope="col" class="num">Ordered</th><th scope="col" class="num">Allocated</th></tr></thead>
+      <tbody>
+        {% for o in p.wms.orders %}
+        <tr><td>{{ o.customer }}</td><td>{{ o.status }}</td><td class="num">{{ o.order_qty|num }}</td><td class="num">{{ o.allocated_units|num }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </details>
+  {% endif %}
+</article>

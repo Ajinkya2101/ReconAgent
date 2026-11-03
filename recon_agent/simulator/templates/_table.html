@@ -1,0 +1,25 @@
+{% set recent = {} %}{% for ev in feed if ev.entity == e.name and ev.producer != "seed" and ev.key not in recent %}{% set _ = recent.update({ev.key: ev.seq}) %}{% endfor %}
+<div id="table" class="table-wrap"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% if rows %}
+  <table class="grid">
+    <thead>
+      <tr>
+        <th scope="col">{{ e.key }}</th>
+        {% for c in e.summary %}<th scope="col"{% if e.columns[c] == "number" %} class="num"{% endif %}>{{ c }}</th>{% endfor %}
+        <th scope="col" class="num">Last change</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}{% set k = r[e.key] %}
+      <tr data-key="{{ k }}"{% if k in recent %} class="is-recent"{% endif %}>
+        <th scope="row"><a class="code" href="/t/{{ e.name }}?key={{ k|urlencode }}" hx-get="/t/{{ e.name }}/edit/{{ k|urlencode }}" hx-target="#editor" hx-push-url="/t/{{ e.name }}?key={{ k|urlencode }}">{{ k }}</a></th>
+        {% for c in e.summary %}<td{% if e.columns[c] == "number" %} class="num"{% endif %}>{{ r[c]|show }}</td>{% endfor %}
+        <td class="num code">{% if k in recent %}<span class="changed">changed</span> {% endif %}S{{ row_seq[k] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No rows. Reset to the starting day, or add a new row.</p>
+  {% endif %}
+</div>

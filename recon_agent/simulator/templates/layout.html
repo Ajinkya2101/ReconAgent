@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{# Every signed-in page: the ink bar (clock, status), the tabs, then the page, then the live poller. #}
+{% block body %}
+<header class="bar">
+  <div class="bar-id">
+    <span class="badge badge--inv">Simulation</span>
+    <div><strong>Source simulator</strong><span class="bar-sub">Synthetic MIPS · ODI · WMS · Oracle. Each change goes through the integration to the worklist.</span></div>
+  </div>
+  {% include "_clock.html" %}
+  {% include "_status.html" %}
+  <form class="bar-user" method="post" action="/signout">
+    <span title="Operator">{{ operator }}</span>
+    <button class="btn btn--sm btn--on-ink" type="submit">Sign out</button>
+  </form>
+</header>
+
+<nav class="tabs" aria-label="Source systems and tools">
+  {% for system, ents in SYSTEMS.items() %}
+  <div class="tab-group">
+    <span class="tab-system">{{ system }}</span>
+    {% for x in ents %}{% set on = page == "table" and x.name == e.name %}
+    <a class="tab{% if on %} is-current{% endif %}" href="/t/{{ x.name }}"{% if on %} aria-current="page"{% endif %}>{{ x.label }} <b id="count-{{ x.name|replace('.', '-') }}">{{ counts[x.name] }}</b></a>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <div class="tab-group tab-group--tools">
+    <span class="tab-system">RUN</span>
+    <a class="tab{% if page == 'scenarios' %} is-current{% endif %}" href="/scenarios"{% if page == 'scenarios' %} aria-current="page"{% endif %}>Scenarios</a>
+    <a class="tab{% if page == 'integration' %} is-current{% endif %}" href="/integration"{% if page == 'integration' %} aria-current="page"{% endif %}>Integration{% if status.faults %} <b class="tab-alert">{{ status.faults }} fault{{ "s" if status.faults != 1 }}</b>{% endif %}</a>
+  </div>
+  <form class="tabs-reset" hx-post="/reset" hx-confirm="Reset to the starting day? This clears every change, fault and delivery, including other operators' work, and re-publishes the synthetic seed.">
+    <button class="btn btn--sm btn--quiet" type="submit">Reset to starting day</button>
+  </form>
+</nav>
+
+{% block page %}{% endblock %}
+{% include "_poller.html" %}
+{% endblock %}

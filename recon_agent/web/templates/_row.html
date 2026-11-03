@@ -1,0 +1,24 @@
+{% from "_macros.html" import icon, tag, severity, money_or_dash, ack_chip %}
+{% set top = row.top %}
+{% set n_open = row.open_flags|length %}
+<li id="row-{{ row.key }}" class="row{% if row.key == open_key or (selected and selected.key == row.key) %} is-current{% endif %}{% if not row.is_open %} is-decided{% endif %}"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>
+  <a class="row-link" href="/row/{{ row.key }}" hx-get="/row/{{ row.key }}" hx-target="#detail" hx-push-url="true" data-open-row="{{ row.key }}">
+    <span class="row-tag">{{ tag(row.sales_date) }}{% if row.carry_accepted %}<span class="row-carry">{{ icon("arrow") }}{{ tag(next_sales_day(row.sales_date), "tag--xs") }}</span>{% endif %}</span>
+    <span class="row-id">
+      <span class="code">{{ row.sku or "PLANT" }}</span>
+      <span class="row-item">{{ row.description }}</span>
+    </span>
+    <span class="row-money">{{ money_or_dash(row.dollars) }}</span>
+    <span class="row-second">
+      {{ severity(row.severity) }}
+      <span class="row-title">{{ top.title }}</span>
+      <span class="row-units">{{ top.units|abs|num }} units</span>
+      {% if n_open > 1 %}<span class="row-more">+{{ n_open - 1 }} more</span>{% endif %}
+      {% if not row.is_open %}<span class="row-state">{{ row.flags|length }} decided</span>{% endif %}
+    </span>
+    <span class="row-chips">
+      {%- set ack_flag = store.row_ack_flag(row) %}{% if ack_flag %}{{ ack_chip(ack_flag) }}{% endif -%}
+      {%- if row.claim %}<span class="chip chip--claim" title="Claimed by {{ row.claim.user }} at {{ row.claim.at|hm }}">{{ icon("claim") }}{{ row.claim.user|initials }}</span>{% endif -%}
+    </span>
+  </a>
+</li>

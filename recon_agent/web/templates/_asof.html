@@ -1,0 +1,9 @@
+{% from "_macros.html" import tag %}
+{# Freshness of the data on screen. /changes re-sends it out of band, so it follows the feed. #}
+<span class="asof-detail" id="asof-detail"{% if asof_oob %} hx-swap-oob="true"{% endif %}>
+{%- if store.feed.mode == "events" -%}
+  {{ tag(store.sales_date, "tag--xs") }} event #{{ store.feed.seq }} · plant time {{ store.loaded_at.strftime("%H:%M:%S") }}
+{%- else -%}
+  MIPS · ODI · WMS for {{ tag(store.sales_date, "tag--xs") }} loaded {{ store.loaded_at|hm }}
+{%- endif -%}
+</span>

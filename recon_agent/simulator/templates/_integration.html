@@ -1,0 +1,72 @@
+<div id="integration" class="int" hx-target="this" hx-swap="outerHTML">
+  {% if message %}<p class="notice notice--ok" role="status">{{ message }}</p>{% endif %}
+  {% if error %}<p class="notice notice--err" role="alert">{{ error }}</p>{% endif %}
+
+  <section class="int-block" aria-labelledby="faults-h">
+    <h2 id="faults-h">Active faults</h2>
+    {% if faults %}
+    <table class="grid">
+      <thead><tr><th scope="col">#</th><th scope="col">Fault</th><th scope="col">Applies to</th><th scope="col">Left</th><th scope="col">Note</th><th scope="col"><span class="sr">Remove</span></th></tr></thead>
+      <tbody>
+        {% for f in faults %}
+        <tr>
+          <th scope="row" class="code">{{ f.id }}</th>
+          <td><b>{{ f.kind }}</b>{% if f.kind in ("delay", "duplicate") and f.seconds %} {{ "%g"|format(f.seconds) }} s{% endif %}{% if f.kind == "reorder" %}, batches of {{ f.batch }}{% endif %}</td>
+          <td class="code">{{ f.source if f.source != "*" else "all systems" }}{% if f.entity != "*" %} · {{ f.entity }}{% endif %}</td>
+          <td>{{ f.remaining if f.remaining is not none else "until removed" }}</td>
+          <td>{{ f.note or "" }}</td>
+          <td><button class="btn btn--sm" hx-post="/integration/faults/{{ f.id }}/remove">Remove</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">No faults: every change reaches the worklist at once, exactly once, in order.</p>
+    {% endif %}
+    {% set i = status.integration %}
+    <div class="int-queue">
+      <span><b>{{ i.pending }}</b> delayed · <b>{{ i.held }}</b> held · <b>{{ i.dropped }}</b> dropped · <b>{{ i.duplicates_delivered }}</b> duplicate copies delivered</span>
+      <span class="int-actions">
+        <button class="btn btn--sm" hx-post="/integration/flush" title="Deliver every delayed or held change now">Deliver waiting now</button>
+        <button class="btn btn--sm" hx-post="/integration/redeliver" title="Replay dropped changes from the source, in order">Replay dropped</button>
+        <button class="btn btn--sm btn--danger" hx-post="/integration/clear">Remove all faults</button>
+      </span>
+    </div>
+  </section>
+
+  <section class="int-block" aria-labelledby="presets-h">
+    <h2 id="presets-h">Common failures</h2>
+    <div class="presets">
+      {% for label, hint, vals in FAULT_PRESETS %}
+      <button class="preset" hx-post="/integration/faults" hx-vals='{{ vals|tojson }}'><b>{{ label }}</b><span>{{ hint }}</span></button>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="int-block" aria-labelledby="custom-h">
+    <h2 id="custom-h">Add a fault</h2>
+    <form class="fault-form" hx-post="/integration/faults">
+      <label class="fld"><span class="fld-name">Fault</span>
+        <select name="kind">{% for k in FAULT_KINDS %}<option>{{ k }}</option>{% endfor %}</select></label>
+      <label class="fld"><span class="fld-name">System</span>
+        <select name="source"><option value="*">all</option>{% for s in SYSTEMS %}<option>{{ s }}</option>{% endfor %}</select></label>
+      <label class="fld"><span class="fld-name">Entity</span>
+        <select name="entity"><option value="*">all</option>{% for n in ENTITIES %}<option>{{ n }}</option>{% endfor %}</select></label>
+      <label class="fld"><span class="fld-name">Seconds <small>delay, duplicate</small></span><input name="seconds" inputmode="decimal" placeholder="60"></label>
+      <label class="fld"><span class="fld-name">Batch <small>reorder</small></span><input name="batch" inputmode="numeric" placeholder="3"></label>
+      <label class="fld"><span class="fld-name">Changes <small>empty: until removed</small></span><input name="count" inputmode="numeric" placeholder="1"></label>
+      <label class="fld fld--wide"><span class="fld-name">Note</span><input name="note" maxlength="120" placeholder="Why, e.g. OIC agent restart"></label>
+      <button class="btn btn--primary" type="submit">Add fault</button>
+    </form>
+  </section>
+
+  <section class="int-block" aria-labelledby="oic-h">
+    <h2 id="oic-h">Corrections endpoint</h2>
+    <p class="pane-note">The worklist sends approved corrections to <span class="code">/oic/corrections</span> here, standing in for Oracle Integration. Applied corrections become source changes and travel the integration like any other.</p>
+    <form class="oic" hx-post="/integration/oic" hx-trigger="change">
+      {% for mode, label in OIC_MODES.items() %}
+      <label class="check"><input type="radio" name="mode" value="{{ mode }}"{% if status.oic == mode %} checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+    </form>
+  </section>
+</div>

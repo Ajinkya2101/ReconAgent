@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% block title %}Scenarios · Source simulator{% endblock %}
+{% block page %}
+<main class="layout layout--tool">
+  <section class="pane pane--table" aria-labelledby="sc-h">
+    <div class="pane-head">
+      <div>
+        <h1 id="sc-h">Scenarios</h1>
+        <p class="pane-note">The eight known mismatch scenarios as scripts. Each is designed against the starting day: run it there, or tick "Reset first". Steps go through the integration, so active faults apply.</p>
+      </div>
+    </div>
+    <ol class="scenarios">
+      {% for sc in SCENARIOS.values() %}
+      <li class="sc" id="sc-{{ sc.id }}">
+        <header class="sc-head">
+          <span class="sc-num">Scenario {{ sc.number }}</span>
+          <h2>{{ sc.title }}</h2>
+        </header>
+        <p class="sc-story">{{ sc.story }}</p>
+        <ol class="sc-steps">
+          {% for step in sc.steps %}<li>{% if step.advance %}<span class="sc-wait">after {{ step.advance }} of plant time</span> {% endif %}{{ step.say }}</li>{% endfor %}
+        </ol>
+        <div class="sc-expect">
+          <span class="stat-k">Watch the worklist for</span>
+          <ul>{% for fid, why in sc.appears.items() %}<li><span class="code">{{ fid }}</span> {{ why }}</li>{% endfor %}</ul>
+        </div>
+        <form class="sc-run" hx-post="/scenarios/{{ sc.id }}/run" hx-target="#run" hx-swap="outerHTML">
+          <label class="check"><input type="checkbox" name="reset" value="1"> Reset first</label>
+          <label class="sc-pause">Seconds between steps
+            <select name="pause"><option value="0">0</option><option value="3" selected>3</option><option value="10">10</option></select></label>
+          <button class="btn btn--primary btn--sm" type="submit">Run {{ sc.id }}</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+  <section class="pane pane--editor" aria-label="Scenario run">
+    {% include "_run.html" %}
+  </section>
+  {% include "_feed_pane.html" %}
+</main>
+{% endblock %}

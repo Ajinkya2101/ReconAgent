@@ -1,0 +1,17 @@
+<div id="status" class="bar-status"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <span class="stat"><span class="stat-k">Event log</span><b class="code">#{{ status.head }}</b></span>
+  {% set i = status.integration %}
+  <span class="stat" title="Changes the integration has not delivered: delayed, held for reorder, or dropped">
+    <span class="stat-k">In flight</span>
+    {%- if i.pending or i.held or i.dropped %} <b>{{ i.pending + i.held }} waiting</b>{% if i.dropped %} · <b>{{ i.dropped }} dropped</b>{% endif %}
+    {%- else %} <b>none</b>{% endif %}</span>
+  <span class="stat"><span class="stat-k">Worklist</span>
+    {%- if not status.worklist_live %} <b>not reading</b>
+    {%- elif status.lag %} <b class="code">#{{ status.committed }}</b> · {{ status.lag }} behind
+    {%- else %} <b>up to date</b>{% endif %}</span>
+  <span class="stat" title="Time from an event reaching the log to the worklist having reconciled it (last {{ status.samples }} non-seed events)">
+    <span class="stat-k">Event → worklist</span>
+    {%- if status.samples %} <b>p95 {{ "%.2f"|format(status.p95) }} s</b> · p50 {{ "%.2f"|format(status.p50) }} s
+    {%- else %} <b>no samples yet</b>{% endif %}</span>
+  <a class="btn btn--sm btn--on-ink" href="{{ config.WORKLIST_URL }}" target="_blank" rel="noopener">Open worklist</a>
+</div>

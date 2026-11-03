@@ -1,0 +1,22 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.venv
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.impeccable/
+.vscode/
+output/
+# Client data and decks stay out of the image; the launcher mounts them at runtime.
+data/
+docs/
+*.xlsx
+*.pptx
+*.docx
+~$*
+*.md
+*.bat

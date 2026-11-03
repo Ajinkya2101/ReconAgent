@@ -1,0 +1,31 @@
+{% set n = store.res.narration %}
+{% set first = n.shift_briefing.split(". ")[0] %}
+<section class="briefing{% if expanded %} is-expanded{% endif %}" id="briefing" data-briefing-id="{{ store.res.kpis.sales_date }}-{{ store.loaded_at.strftime('%H%M') }}" aria-labelledby="briefing-h">
+  <div class="briefing-line">
+    <h2 id="briefing-h">Shift briefing</h2>
+    <span class="src">{% if store.narration_is_ai %}AI briefing · {{ config.OCI_MODEL_ID }}{% elif store.narration_state == "pending" %}Rule text · AI text on the way{% elif store.narration_state == "failed" %}Rule text · AI unavailable{% else %}Rule text{% endif %} · {{ store.loaded_at|hm }}</span>
+    {% if not expanded %}
+    <p class="briefing-lede">{{ first }}.</p>
+    <button type="button" class="btn btn--quiet btn--sm" hx-get="/briefing" hx-target="#briefing" hx-swap="outerHTML">Read briefing</button>
+    {% else %}
+    <button type="button" class="btn btn--quiet btn--sm" data-briefing-read>Mark read</button>
+    <button type="button" class="btn btn--quiet btn--sm" data-briefing-reopen>Read again</button>
+    {% endif %}
+  </div>
+  {% if expanded %}
+  <div class="briefing-body">
+    <p>{{ n.shift_briefing }}</p>
+    <h3>Top actions</h3>
+    <ol class="actions">
+      {% for a in n.top_actions %}
+      {% set head, _, rest = a.partition(": ") %}
+      {% set key = head.lstrip("0") %}
+      <li>
+        {% if key in store.rows %}<a class="code" href="/row/{{ key }}" hx-get="/row/{{ key }}" hx-target="#detail" hx-push-url="true" data-open-row="{{ key }}">{{ head }}</a>{% else %}<span class="code">{{ head }}</span>{% endif %}
+        <span>{{ rest or a }}</span>
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+  {% endif %}
+</section>

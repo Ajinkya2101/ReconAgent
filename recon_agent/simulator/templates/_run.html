@@ -1,0 +1,12 @@
+<div id="run" class="run"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <h2>Run</h2>
+  {% if busy %}<p class="notice notice--err" role="alert">Scenario {{ run.id }} is still running. Wait for it to finish.</p>{% endif %}
+  {% if run.id %}
+  <p class="run-head"><b>Scenario {{ SCENARIOS[run.id].number }}: {{ SCENARIOS[run.id].title }}</b>
+    <span class="run-state">{% if run.running %}running…{% elif run.error %}stopped{% else %}finished{% endif %}</span></p>
+  <ol class="run-lines" aria-live="polite">{% for line in run.lines %}<li>{{ line }}</li>{% endfor %}</ol>
+  {% if run.error %}<p class="notice notice--err" role="alert">{{ run.error }}</p>{% endif %}
+  {% else %}
+  <p class="editor-empty">Pick a scenario and run it. Its steps and their events appear here as they land; keep the worklist open beside this window to watch it react.</p>
+  {% endif %}
+</div>

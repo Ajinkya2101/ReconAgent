@@ -1,0 +1,10 @@
+<span id="changes" class="changes" hx-get="/changes?since={{ since }}" hx-trigger="every {{ config.WEB_POLL_SECONDS }}s, recon:changed from:body" hx-swap="outerHTML"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>
+  {%- set ai_ready = "__ai__" in keys %}{% set row_keys = keys|reject("equalto", "__ai__")|list %}
+  {%- if ai_ready %}
+  <a class="changes-pill" href="">AI explanations ready · Reload</a>
+  {%- elif row_keys %}
+  <button type="button" class="changes-pill" hx-get="/queue" hx-include="#filters" hx-vals='{"since": {{ since }}}' hx-target="#queue">{{ row_keys|length }} {{ "row" if row_keys|length == 1 else "rows" }} changed by others · Update</button>
+  {%- endif %}
+  <span class="changes-checked">checked {{ checked.strftime("%H:%M:%S") }}</span>
+</span>
+{%- if asof_oob %}{% include "_asof.html" %}{% endif %}

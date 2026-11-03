@@ -1,0 +1,10 @@
+{% include "_editor.html" %}
+{% if oob %}
+{# A publish also refreshes everything that shows the log, so the operator sees the event land. #}
+{% with oob = true %}
+{% include "_table.html" %}
+{% include "_feed.html" %}
+{% include "_status.html" %}
+{% for name, n in counts.items() %}<b id="count-{{ name|replace('.', '-') }}" hx-swap-oob="true">{{ n }}</b>{% endfor %}
+{% endwith %}
+{% endif %}

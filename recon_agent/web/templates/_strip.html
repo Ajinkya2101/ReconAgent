@@ -1,0 +1,22 @@
+{% from "_macros.html" import icon, tag %}
+<header class="strip">
+  <a class="strip-mark" href="/">Exception worklist</a>
+  <p class="strip-asof">
+    {% if store.feed.mode == "events" %}
+    <span class="asof-mode"><span class="sim-badge" title="Synthetic data from the event simulator. No plant data.">Simulation</span><span class="asof-long">Live feed</span></span>
+    {% else %}
+    <span class="asof-mode"><span class="asof-long">Daily extracts, not live</span><span class="asof-short">Not live</span></span>
+    {% endif %}
+    {% include "_asof.html" %}
+    {% set since = version %}{% set keys = [] %}{% set checked = store.loaded_at %}
+    {% include "_changes.html" %}
+  </p>
+  <nav class="strip-actions" aria-label="Account and assistant">
+    {% include "_strip_claims.html" %}
+    <button type="button" class="btn btn--quiet" data-assistant aria-controls="assistant" aria-expanded="false">{{ icon("chat") }}<span>Ask</span></button>
+    <form method="post" action="/signout" class="strip-user">
+      <span class="who" title="{{ user.name }} · {{ user.role }}"><span class="who-initials" aria-hidden="true">{{ user.initials }}</span><span class="who-name">{{ user.name }}</span><span class="who-role">{{ user.role }}</span></span>
+      <button class="btn btn--quiet btn--icon" type="submit">{{ icon("signout", "Sign out") }}</button>
+    </form>
+  </nav>
+</header>

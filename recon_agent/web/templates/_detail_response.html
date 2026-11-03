@@ -1,0 +1,10 @@
+{% set row = selected %}
+{% include "_detail.html" %}
+{% if oob_row %}
+{% set oob = true %}{% set open_key = row.key %}
+{% include "_row.html" %}
+{% set counts = store.counts(user.name) %}
+{% for v in VIEWS %}<b class="view-count" id="count-{{ v }}" hx-swap-oob="outerHTML">{{ counts[v] }}</b>{% endfor %}
+{% include "_strip_claims.html" %}
+<div id="carried-in" hx-swap-oob="outerHTML">{% include "_carried_in.html" %}</div>
+{% endif %}

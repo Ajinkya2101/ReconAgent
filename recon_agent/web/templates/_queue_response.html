@@ -1,0 +1,7 @@
+{% include "_queue.html" %}
+{% set oob = true %}{% set since = version %}{% set keys = [] %}{% set checked = store.now() %}
+{% include "_changes.html" %}
+{% for v in VIEWS %}<b class="view-count" id="count-{{ v }}" hx-swap-oob="outerHTML">{{ counts[v] }}</b>{% endfor %}
+{% if detail_row %}
+<div id="detail" hx-swap-oob="innerHTML">{% set row = detail_row %}{% include "_detail.html" %}</div>
+{% endif %}

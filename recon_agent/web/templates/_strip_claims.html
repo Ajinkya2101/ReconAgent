@@ -1,0 +1,3 @@
+{% from "_macros.html" import icon %}
+{% set n_mine = store.counts(user.name).mine %}
+<a id="strip-claims" class="btn btn--quiet strip-claims" href="/?view=mine"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>{{ icon("claim") }}<span class="strip-claims-label">My claims</span><b>{{ n_mine }}</b></a>

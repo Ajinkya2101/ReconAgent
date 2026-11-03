@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, tag %}
+{% block title %}{% if selected and not auto_selected %}{{ selected.sku or "Plant" }} · {% endif %}Exception worklist{% endblock %}
+{% block body %}
+{% include "_strip.html" %}
+{% set open_key = selected.key if selected and not auto_selected else "" %}
+<div class="layout{% if open_key %} has-detail{% endif %}" id="layout">
+  <main class="queue-col" id="main">
+    {% set expanded = false %}
+    {% include "_briefing.html" %}
+
+    <form id="filters" class="filters" action="/" method="get"
+          hx-get="/queue" hx-target="#queue" hx-push-url="false"
+          hx-trigger="change, input changed delay:250ms from:#q, submit">
+      <input type="hidden" name="open" value="{{ open_key }}" id="open-key">
+      <fieldset class="days">
+        <legend class="sr">Sales day</legend>
+        <label class="day day--all">
+          <input type="radio" name="day" value="" {% if not day %}checked{% endif %}>
+          <span class="day-face"><span class="day-name">All open days</span></span>
+        </label>
+        {% for d in days %}
+        <label class="day">
+          <input type="radio" name="day" value="{{ d.date.isoformat() }}" {% if day == d.date.isoformat() %}checked{% endif %}>
+          <span class="day-face">
+            {{ tag(d.date, "tag--lg") }}
+            <span class="day-stats">
+              <span class="day-money">{% if d.dollars is not none %}{{ d.dollars|money }}{% endif %}</span>
+              <span class="day-sub">{{ d.rows }} rows · {{ d.flags }} open flags{% if d.dollars is not none %} · engine total at risk{% endif %}</span>
+            </span>
+          </span>
+        </label>
+        {% endfor %}
+        <div id="carried-in" class="carried-in">{% include "_carried_in.html" %}</div>
+      </fieldset>
+
+      <div class="toolbar">
+        <fieldset class="views">
+          <legend class="sr">Show</legend>
+          {% for v, label in VIEWS.items() %}
+          <label class="view">
+            <input type="radio" name="view" value="{{ v }}" {% if view == v %}checked{% endif %}>
+            <span>{{ label }} <b class="view-count" id="count-{{ v }}">{{ counts[v] }}</b></span>
+          </label>
+          {% endfor %}
+        </fieldset>
+        <label class="search">
+          {{ icon("search") }}
+          <span class="sr">Find SKU or item</span>
+          <input id="q" type="search" name="q" value="{{ q }}" placeholder="SKU or item" autocomplete="off" spellcheck="false">
+          <kbd class="kbd" aria-hidden="true">/</kbd>
+        </label>
+      </div>
+    </form>
+
+    <p class="rank-note">Ranked by priority: retail $ at risk × severity × rule confidence. Planner decisions move rule confidence.</p>
+    <div id="queue" class="queue" aria-live="polite">
+      {% include "_queue.html" %}
+    </div>
+  </main>
+
+  <section id="detail" class="detail-col" aria-label="SKU detail" tabindex="-1">
+    {% if selected %}{% set row = selected %}{% include "_detail.html" %}{% else %}
+    <div class="detail-empty"><p>Nothing open. Every SKU in today's extracts reconciles.</p></div>
+    {% endif %}
+  </section>
+</div>
+{% include "_assistant.html" %}
+{% endblock %}

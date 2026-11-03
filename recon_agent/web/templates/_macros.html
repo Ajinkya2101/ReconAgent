@@ -1,0 +1,25 @@
+{% macro icon(name, label="") -%}
+<svg class="icon" {% if label %}role="img" aria-label="{{ label }}"{% else %}aria-hidden="true"{% endif %}><use href="#i-{{ name }}"/></svg>
+{%- endmacro %}
+
+{% macro tag(d, size="") -%}
+{%- set t = day_tag(d) -%}
+<span class="tag {{ size }}{% if t.fill == '#ffffff' %} is-white{% endif %}" style="--tag:{{ t.fill }};--tag-ink:{{ t.ink }}" title="Sales day {{ t.long }}"><span class="tag-face" aria-hidden="true"><span class="tag-day">{{ t.label }}</span><span class="tag-code">{{ t.code }}</span></span><span class="sr">Sales day {{ t.long }}</span></span>
+{%- endmacro %}
+
+{% macro severity(level) -%}
+<span class="sev sev--{{ level|lower }}"><span class="sev-meter" aria-hidden="true"><i></i><i></i><i></i></span>{{ level }}</span>
+{%- endmacro %}
+
+{% macro money_or_dash(x) -%}
+{%- if x >= 0.5 %}{{ x|money }}{% else %}<span class="no-money" title="No retail value attached to this flag">no $</span>{% endif -%}
+{%- endmacro %}
+
+{% macro ack_chip(f) -%}
+{%- set a = store.ack_state(f) -%}
+{%- if a.state == "due" -%}
+<span class="chip chip--due">{{ icon("clock") }}Ack by {{ a.due|hm }}</span>
+{%- elif a.state == "overdue" -%}
+<span class="chip chip--overdue">{{ icon("clock") }}Ack overdue {{ a.minutes }} min</span>
+{%- endif -%}
+{%- endmacro %}

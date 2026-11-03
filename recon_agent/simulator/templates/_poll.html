@@ -1,0 +1,12 @@
+{# Poll response: the poller itself, plus out-of-band refreshes. The editor and forms are never touched. #}
+{% include "_poller.html" %}
+{% with oob = true %}
+{% include "_feed.html" %}
+{% include "_status.html" %}
+{% include "_clock.html" %}
+{% if page == "scenarios" %}{% include "_run.html" %}{% endif %}
+{% if table_changed %}
+{% include "_table.html" %}
+{% for name, n in counts.items() %}<b id="count-{{ name|replace('.', '-') }}" hx-swap-oob="true">{{ n }}</b>{% endfor %}
+{% endif %}
+{% endwith %}

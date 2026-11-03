@@ -1,0 +1,22 @@
+{% extends "layout.html" %}
+{% block title %}{{ e.source }} {{ e.label }} · Source simulator{% endblock %}
+{% block page %}
+<main class="layout">
+  <section class="pane pane--table" aria-labelledby="table-h">
+    <div class="pane-head">
+      <div>
+        <h1 id="table-h">{{ e.source }} {{ e.label|lower }}</h1>
+        <p class="pane-note">{{ e.description }}. Key: <span class="code">{{ e.key }}</span>{% if e.synthetic_key %} (synthetic){% endif %}. Shows the source system's own state, delivered or not.</p>
+      </div>
+      <a class="btn btn--sm" href="/t/{{ e.name }}?new=1" hx-get="/t/{{ e.name }}/new" hx-target="#editor">New row</a>
+    </div>
+    {% include "_table.html" %}
+  </section>
+
+  <section class="pane pane--editor" id="editor" aria-label="Row editor">
+    {% include "_editor.html" %}
+  </section>
+
+  {% include "_feed_pane.html" %}
+</main>
+{% endblock %}

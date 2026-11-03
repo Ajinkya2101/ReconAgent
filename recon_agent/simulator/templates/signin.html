@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Source simulator{% endblock %}
+{% block body %}
+<main class="signin">
+  <form class="signin-card" method="post" action="/signin">
+    <span class="badge">Simulation</span>
+    <h1>Source simulator</h1>
+    <p>Changes made here are published as MIPS, ODI, WMS and Oracle events to the reconciliation worklist. All data is synthetic.</p>
+    {% if error == "passcode" %}<p class="notice notice--err" role="alert">That passcode is not right.</p>{% endif %}
+    <label class="fld"><span class="fld-name">Your name</span>
+      <input name="name" required maxlength="40" autocomplete="name" autofocus></label>
+    {% if passcode %}
+    <label class="fld"><span class="fld-name">Operator passcode</span>
+      <input name="passcode" type="password" required autocomplete="current-password"></label>
+    {% endif %}
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="btn btn--primary" type="submit">Sign in</button>
+  </form>
+</main>
+{% endblock %}

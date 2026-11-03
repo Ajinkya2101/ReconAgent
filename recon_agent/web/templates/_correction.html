@@ -1,0 +1,31 @@
+{# Write-back: the proposed source-row change for this flag, and what became of it. Event feed only. #}
+{% set c = store.correction(f) %}
+{% set p = store.proposal(f) if not c or c.status in ("Failed", "Cancelled", "Confirmed") else none %}
+{% set shown = p if p and (not c or c.status != "Confirmed") else c %}
+{% if shown %}
+{% set states = {"Approved": "Approved, sending", "Sent": "Sent, waiting for the change in the feed", "Confirmed": "Confirmed in the feed", "Failed": "Failed", "Cancelled": "Cancelled"} %}
+<div class="wb{% if c and c.status == 'Failed' %} wb--failed{% endif %}">
+  <p class="wb-head">
+    <span class="src">Write-back to {{ shown.system }}</span>
+    <b>{% if c and shown is not sameas p %}{{ c.id }} · {{ states[c.status] }}{% else %}Proposed correction{% endif %}</b>
+  </p>
+  <p class="wb-summary">{{ shown.summary }}</p>
+  <p class="wb-change"><span class="code">{{ shown.entity }} {{ shown.key }}</span>
+    {%- for col, new in shown.changes.items() if shown.op == "U" %} · {{ col }} {{ shown.expected.get(col, "")|num if shown.expected.get(col) is not none else "empty" }} → <b>{{ new|num if new is not none else "empty" }}</b>{% endfor %}
+    {%- if shown.op == "I" %} · new row{% endif %}</p>
+  {% if c and shown is not sameas p %}
+  <ol class="wb-history">{% for h in c.history %}<li><b>{{ h.status }}</b> {{ h.at[11:16] }} · {{ h.by }}{% if h.note and h.status != "Approved" %} · {{ h.note }}{% endif %}</li>{% endfor %}</ol>
+  {% endif %}
+  {% if user.role in APPROVERS %}
+    {% if c and c.status == "Failed" %}
+    <div class="wb-actions"><button class="btn btn--sm btn--primary" hx-post="/corrections/{{ c.id }}/retry" hx-target="#detail" hx-disabled-elt="this">Retry</button>
+      <span class="decide-hint">Recomputed from what the worklist shows now</span></div>
+    {% elif shown is sameas p %}
+    <div class="wb-actions"><button class="btn btn--sm btn--primary" hx-post="/flags/{{ f.id|urlencode }}/correction" hx-target="#detail" hx-disabled-elt="this">Approve and send to {{ p.system }}</button>
+      <span class="decide-hint">{% if f.status == "Open" %}Accepts the flag and s{% else %}S{% endif %}ends this change through Oracle Integration; it is confirmed when the feed shows it</span></div>
+    {% endif %}
+  {% elif shown is sameas p %}
+  <p class="decide-hint">A planner or manager approves write-back.</p>
+  {% endif %}
+</div>
+{% endif %}

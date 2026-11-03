@@ -1,0 +1,23 @@
+{% set open_key = open_key|default("") %}
+{% if rows %}
+<ol class="rows{% if open_key %} has-open{% endif %}" id="rows" aria-label="Rows ranked by priority">
+  {% for row in rows %}{% include "_row.html" %}{% endfor %}
+</ol>
+{% else %}
+<div class="queue-empty">
+  {% if q %}
+  <p><b>No SKU or item matches “{{ q }}”.</b> Search by SKU number or part of the item name, for example 150080 or brioche.</p>
+  {% elif view == "ack" %}
+  <p><b>No High flags are waiting for acknowledgment.</b> High flags must be acknowledged within {{ config.HIGH_ACK_MINUTES }} minutes of being raised; they appear here until someone does.</p>
+  {% elif view == "mine" %}
+  <p><b>You haven't claimed anything.</b> Claim a SKU from its detail so other supervisors can see you're working it.</p>
+  {% elif view == "decided" %}
+  <p><b>Nothing decided yet.</b> Accepted and rejected flags collect here, with who decided and when.</p>
+  {% else %}
+  <p><b>Every SKU reconciles{% if day %} for this sales day{% endif %}.</b> {{ store.res.kpis.skus_reconciled }} SKUs were checked across MIPS, ODI and WMS.</p>
+  {% endif %}
+</div>
+{% endif %}
+{% if store.dismissed and view == "all" %}
+<p class="queue-note">{{ store.dismissed }} {{ "variance" if store.dismissed == 1 else "variances" }} rejected earlier {{ "is" if store.dismissed == 1 else "are" }} hidden while the quantity stays the same.</p>
+{% endif %}

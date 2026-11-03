@@ -1,0 +1,30 @@
+{% set OPS = {"I": "Insert", "U": "Update", "D": "Delete"} %}
+<ol id="feed" class="feed"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% for ev in feed %}
+  {% set first = ev.deliveries[0] if ev.deliveries else none %}
+  <li class="ev{% if ev.producer == 'seed' %} ev--seed{% endif %}">
+    <div class="ev-line">
+      <span class="ev-seq code" title="Source change number">S{{ ev.source_seq }}</span>
+      <span class="ev-op ev-op--{{ ev.op|lower }}">{{ OPS[ev.op] }}</span>
+      <a class="ev-row code" href="/t/{{ ev.entity }}?key={{ ev.key|urlencode }}">{{ ev.entity }} {{ ev.key }}</a>
+      <span class="ev-state">
+        {%- for d in ev.deliveries %}
+        {%- if d.status == "delivered" %}<span class="dl">{% if d["copy"] %}copy {% endif %}event #{{ d.seq }}{% if d.seq <= status.committed %} · on worklist{% endif %}</span>
+        {%- elif d.status == "dropped" %}<span class="dl dl--bad">dropped</span>
+        {%- elif d.status == "held" %}<span class="dl dl--wait">held for reorder</span>
+        {%- else %}<span class="dl dl--wait">{{ d.fault or "pending" }}</span>{% endif %}
+        {%- endfor %}
+      </span>
+    </div>
+    {% set diff = describe(ev) %}
+    {% if diff %}
+    <ul class="ev-diff">
+      {% for col, before, after in diff %}<li><span class="ev-col">{{ col }}</span> {{ before or "empty" }} → <b>{{ after or "empty" }}</b></li>{% endfor %}
+    </ul>
+    {% endif %}
+    <p class="ev-meta">plant time {{ ev.source_ts.strftime("%m/%d %H:%M:%S") }} · {{ ev.producer }}{% if ev.note %} · {{ ev.note }}{% endif %}</p>
+  </li>
+  {% else %}
+  <li class="empty">No changes yet. Reset to the starting day to publish the synthetic seed.</li>
+  {% endfor %}
+</ol>

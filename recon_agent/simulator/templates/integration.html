@@ -1,0 +1,16 @@
+{% extends "layout.html" %}
+{% block title %}Integration · Source simulator{% endblock %}
+{% block page %}
+<main class="layout layout--tool layout--single">
+  <section class="pane pane--table" aria-labelledby="int-h">
+    <div class="pane-head">
+      <div>
+        <h1 id="int-h">Integration</h1>
+        <p class="pane-note">Between the source systems and the event log sits the integration (GoldenGate, OIC). Faults here change how changes reach the worklist: late, lost, twice or out of order. The source systems keep the change either way.</p>
+      </div>
+    </div>
+    {% include "_integration.html" %}
+  </section>
+  {% include "_feed_pane.html" %}
+</main>
+{% endblock %}

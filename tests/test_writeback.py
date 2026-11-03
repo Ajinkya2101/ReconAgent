@@ -1,0 +1,159 @@
+"""Write-back end to end: the worklist approves a correction, the simulator (standing in for
+Oracle Integration) applies it over real HTTP, and the worklist confirms it only when the change
+comes back through the feed. Also the failure paths: endpoint down, stale row, slow integration.
+
+    python -m unittest discover -s tests -v
+"""
+from __future__ import annotations
+
+import os
+import tempfile
+
+# Isolation, however unittest imports this file (`discover -s tests` skips tests/__init__.py):
+# never call the model, never touch the real planner decisions. Set before recon_agent is imported.
+os.environ["RECON_AI"] = "off"
+os.environ.setdefault("RECON_TEST_DIR", tempfile.mkdtemp(prefix="recon-tests-"))
+os.environ["RECON_FEEDBACK_FILE"] = os.path.join(os.environ["RECON_TEST_DIR"], "feedback.json")
+
+import datetime as dt
+import socket
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import uvicorn
+from fastapi.testclient import TestClient
+
+from recon_agent import sources
+from recon_agent.events import scenarios, seed
+from recon_agent.events.log import Change, EventLog
+from recon_agent.simulator.app import create_app as simulator
+from recon_agent.web.store import Store
+
+from recon_agent import config as _config
+assert "recon-tests-" in str(_config.FEEDBACK_FILE) and not _config.AI_ENABLED, "tests are not isolated"
+
+NOW = dt.datetime(2026, 11, 6, 20, 0)
+
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class WriteBackTest(unittest.TestCase):
+    def setUp(self):
+        self.log = EventLog(Path(tempfile.mkdtemp(prefix="recon-wb-")) / "events.db")
+        seed.seed(self.log)
+        scenarios.run(self.log, scenarios.SCENARIOS["S6"])   # R09 and R10 on 900112
+        self.sim = simulator(self.log.path)
+        port = free_port()
+        self.server = uvicorn.Server(uvicorn.Config(self.sim, host="127.0.0.1", port=port, log_level="warning"))
+        threading.Thread(target=self.server.run, daemon=True).start()
+        while not self.server.started:
+            time.sleep(0.02)
+        self.addCleanup(setattr, self.server, "should_exit", True)
+        url = mock.patch("recon_agent.config.CORRECTIONS_URL", f"http://127.0.0.1:{port}/oic/corrections")
+        url.start()
+        self.addCleanup(url.stop)
+        self.operator = TestClient(self.sim)
+        self.operator.cookies.set("sim_operator", "Ana")
+        self.store = Store(sources.EventFeed(self.log.path))
+
+    def flags(self) -> set[str]:
+        self.store.refresh_if_sources_changed()
+        return {f.id for f in self.store.res.findings}
+
+    def test_approved_correction_is_confirmed_by_the_feed(self):
+        _, f = self.store.find("R09-900112")
+        p = self.store.proposal(f)
+        self.assertEqual((p.entity, p.key, p.changes), ("mips.order_line", "ML-0017", {"Order Quantity": 1100}))
+        _, message = self.store.approve("R09-900112", "Pat Planner")
+        self.assertIn("accepted", message)
+        self.assertNotIn("R09-900112", self.flags())
+        c = self.store.book.for_flag("R09-900112")
+        self.assertEqual([h["status"] for h in c["history"]][-1], "Confirmed")
+        self.assertIsNotNone(c["confirmed_seq"])
+        self.assertEqual(self.store.decision(f)["decision"], "accept")   # approving accepts the flag
+        src = self.log.current("mips.order_line", "ML-0017")
+        self.assertEqual(src["Order Quantity"], 1100)
+        self.assertNotEqual(src["Last Modify Date Time"], "2026-11-05T20:31:00")   # MIPS stamped it
+        # A correction can cascade: ODI's copy of the sales-order quantity is now behind MIPS.
+        self.assertIn("R16-900112", self.flags())
+
+    def test_a_reset_retires_earlier_corrections(self):
+        self.store.approve("R09-900112", "Pat Planner")
+        self.log.reset()
+        seed.seed(self.log)
+        scenarios.run(self.log, scenarios.SCENARIOS["S6"])
+        self.assertIn("R09-900112", self.flags())
+        _, f = self.store.find("R09-900112")
+        self.assertIsNone(self.store.correction(f))           # the old COR-0001 belongs to the old log
+        self.assertIsNotNone(self.store.proposal(f))          # so the flag offers a fresh correction
+        self.assertEqual(len(self.store.book.items), 1)       # still on file for the record
+
+    def test_endpoint_down_then_retry(self):
+        self.operator.post("/integration/oic", data={"mode": "down"})
+        _, message = self.store.approve("R09-900112", "Pat Planner")
+        self.assertIn("unavailable", message)
+        c = self.store.book.for_flag("R09-900112")
+        self.assertEqual(c["status"], "Failed")
+        self.assertIn("R09-900112", self.flags())
+        self.operator.post("/integration/oic", data={"mode": "accept"})
+        self.store.retry(c["id"], "Pat Planner")
+        self.assertNotIn("R09-900112", self.flags())
+        self.assertEqual(self.store.book.items[c["id"]]["status"], "Confirmed")
+
+    def test_stale_row_is_refused(self):
+        # MIPS changes the line after the worklist computed its proposal but before approval reaches OIC.
+        from recon_agent import corrections
+        real_send = corrections.send
+
+        def race(c, by):
+            self.log.publish(Change("mips.order_line", "U", "ML-0017", {"Order Quantity": 950}), "cli", NOW)
+            return real_send(c, by)
+
+        with mock.patch("recon_agent.corrections.send", race):
+            _, message = self.store.approve("R09-900112", "Pat Planner")
+        self.assertIn("changed since", message)
+        self.assertEqual(self.store.book.for_flag("R09-900112")["status"], "Failed")
+        self.assertEqual(self.log.current("mips.order_line", "ML-0017")["Order Quantity"], 950)
+
+    def test_slow_integration_keeps_it_sent_until_the_event_arrives(self):
+        self.log.add_fault("delay", source="MIPS", seconds=0.6)
+        self.store.approve("R09-900112", "Pat Planner")
+        c = self.store.book.for_flag("R09-900112")
+        self.assertEqual(c["status"], "Sent")                 # OIC said yes; the feed has not shown it
+        self.assertIn("R09-900112", self.flags())
+        deadline = time.monotonic() + 5                        # the simulator's pump delivers it
+        while "R09-900112" in self.flags() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertNotIn("R09-900112", self.flags())
+        self.assertEqual(self.store.book.items[c["id"]]["status"], "Confirmed")
+
+    def test_only_planners_and_managers_approve(self):
+        from recon_agent.web.app import create_app as worklist
+        with mock.patch.object(sources, "open_feed", lambda *_: sources.EventFeed(self.log.path)):
+            app = worklist()
+        sup = TestClient(app)
+        sup.cookies.set("recon_user", "Sam")
+        sup.cookies.set("recon_role", "supervisor")
+        self.assertEqual(sup.post("/flags/R09-900112/correction").status_code, 403)
+        detail = sup.get("/row/900112", headers={"HX-Request": "true"}).text
+        self.assertIn("Proposed correction", detail)
+        self.assertIn("A planner or manager approves", detail)
+        planner = TestClient(app)
+        planner.cookies.set("recon_user", "Pat")
+        planner.cookies.set("recon_role", "planner")
+        r = planner.post("/api/corrections", json={"flag_id": "R09-900112"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["correction"]["status"], "Confirmed")
+        self.assertEqual(planner.get(f"/api/corrections/{r.json()['correction']['id']}").json()["key"], "ML-0017")
+
+
+if __name__ == "__main__":
+    unittest.main()
