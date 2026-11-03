@@ -1,0 +1,9 @@
+# TLS in front of the worklist (docker compose --profile tls). Caddy obtains and renews the
+# certificate for RECON_DOMAIN itself; the DNS name must point at this server, ports 80 and 443 open.
+{$RECON_DOMAIN} {
+	encode gzip
+	reverse_proxy worklist:8000 {
+		# Server push (/stream) must reach the browser at once, not when a buffer fills.
+		flush_interval -1
+	}
+}

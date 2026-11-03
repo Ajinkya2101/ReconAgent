@@ -1,0 +1,70 @@
+# Server deployment: the worklist, plus optional TLS (Caddy) and the source simulator.
+# See docs/DEPLOYMENT.md.
+#
+#   docker compose up -d --build                         worklist on http://127.0.0.1:8000
+#   docker compose --profile tls up -d                   + HTTPS on RECON_DOMAIN (ports 80/443)
+#   docker compose --profile simulation up -d            + source simulator on http://127.0.0.1:8100
+#   docker compose logs worklist                         first start: the demo account passwords
+#   docker compose exec worklist python -m recon_agent users list
+#
+# State (accounts, decisions, corrections, reports, the event log) lives on the recon-output volume:
+# back it up. The daily extracts are read from ./data, read-only.
+name: recon-agent
+
+x-app: &app
+  image: ghcr.io/ajinkya2101/reconagent:${RECON_VERSION:-latest}
+  build:
+    context: .
+    args:
+      VERSION: ${RECON_VERSION:-dev}
+  env_file: .env
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+
+services:
+  worklist:
+    <<: *app
+    environment:
+      # The port is published to this machine only, so whatever reaches it is the TLS proxy (or you).
+      RECON_FORWARDED_ALLOW_IPS: "*"
+      RECON_CORRECTIONS_URL: ${RECON_CORRECTIONS_URL:-http://simulator:8100/oic/corrections}
+    ports: ["127.0.0.1:${RECON_PORT:-8000}:8000"]
+    volumes:
+      - ./data:/app/data:ro
+      - recon-output:/app/output
+
+  proxy:
+    image: mirror.gcr.io/library/caddy:2.8.4
+    profiles: [tls]
+    restart: unless-stopped
+    environment:
+      RECON_DOMAIN: ${RECON_DOMAIN:?set RECON_DOMAIN in .env for the tls profile}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [worklist]
+
+  # Synthetic data only: never run it next to a production worklist (RECON_SOURCE=excel).
+  simulator:
+    <<: *app
+    profiles: [simulation]
+    command: ["python", "-m", "recon_agent", "simulate", "--host", "0.0.0.0", "--port", "8100"]
+    environment:
+      RECON_FORWARDED_ALLOW_IPS: "*"
+      RECON_WORKLIST_URL: ${RECON_WORKLIST_URL:-http://localhost:8000/}
+    ports: ["127.0.0.1:${RECON_SIM_PORT:-8100}:8100"]
+    volumes:
+      - recon-output:/app/output
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  recon-output:
+  caddy-data:

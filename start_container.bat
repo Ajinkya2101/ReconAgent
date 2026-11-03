@@ -21,6 +21,8 @@ REM    start_container.bat events ARGS
 REM                                   Run "python -m recon_agent events ARGS" in the
 REM                                   container, e.g. "events seed" or
 REM                                   events set wms.item_order WL-0015 "Order Qty=800"
+REM    start_container.bat users ARGS Manage sign-in accounts, e.g. "users list",
+REM                                   "users add pat.lee --name "Pat Lee" --role planner"
 REM    start_container.bat sim        Start the source simulator container (operator app
 REM                                   that publishes events) on http://localhost:8101/.
 REM    start_container.bat sim-stop | sim-remove | sim-logs
@@ -69,6 +71,7 @@ if /I "%ACTION%"=="logs"    goto :logs
 if /I "%ACTION%"=="status"  goto :status
 if /I "%ACTION%"=="ps"      goto :status
 if /I "%ACTION%"=="events"  goto :events
+if /I "%ACTION%"=="users"   goto :users
 if /I "%ACTION%"=="sim"         goto :sim
 if /I "%ACTION%"=="sim-stop"    goto :sim_stop
 if /I "%ACTION%"=="sim-remove"  goto :sim_remove
@@ -200,7 +203,10 @@ goto :shell
 :shell
 echo.
 echo Worklist: http://localhost:%HOST_PORT%/
-echo API docs: http://localhost:%HOST_PORT%/api/docs
+echo API docs: http://localhost:%HOST_PORT%/api/docs  (when .env sets RECON_API_DOCS=on)
+echo Sign in with an account. On the first start the worklist creates demo accounts
+echo (planner1, supervisor1, manager1, ...) and prints their passwords once:
+echo     start_container.bat logs        or  start_container.bat users list
 echo Dropping you into a shell inside the container as user 'recon'.
 echo Type 'exit' to leave the shell. The container keeps running in the background.
 echo Stop later with: start_container.bat stop    Remove with: start_container.bat remove
@@ -233,6 +239,23 @@ set "EV_ARGS=!EV_ARGS! "%~1""
 goto :events_collect
 :events_run
 docker exec -it %CONTAINER_NAME% python -m recon_agent events !EV_ARGS!
+goto :end
+
+:users
+docker ps -q -f "name=^%CONTAINER_NAME%$" | findstr . >NUL
+if errorlevel 1 (
+    echo Container %CONTAINER_NAME% is not running. Use "start_container.bat" first.
+    exit /b 1
+)
+REM Same pass-through as "events": every argument re-quoted so "Pat Lee" stays one argument.
+set "US_ARGS="
+:users_collect
+shift
+if "%~1"=="" goto :users_run
+set "US_ARGS=!US_ARGS! "%~1""
+goto :users_collect
+:users_run
+docker exec -it %CONTAINER_NAME% python -m recon_agent users !US_ARGS!
 goto :end
 
 :sim
@@ -268,7 +291,7 @@ if errorlevel 1 (
     exit /b 1
 )
 echo.
-echo Source simulator: http://localhost:%SIM_HOST_PORT%/
+echo Source simulator: http://localhost:%SIM_HOST_PORT%/  (sign in with a worklist account)
 echo It publishes to the event log on volume %SIM_VOLUME%. The worklist reads it when .env sets RECON_SOURCE=events.
 echo Empty log? Use "Reset to starting day" in the simulator, or: start_container.bat events seed
 goto :end
@@ -315,6 +338,7 @@ echo   start_container.bat remove        Stop AND remove the container.
 echo   start_container.bat logs          Follow container logs.
 echo   start_container.bat status        Show container state.
 echo   start_container.bat events ARGS   Publish or inspect simulated events, e.g. "events seed", "events status".
+echo   start_container.bat users ARGS    Manage sign-in accounts, e.g. "users list", "users passwd planner1".
 echo   start_container.bat sim           Start the source simulator on http://localhost:8101/ (sim-stop, sim-remove, sim-logs).
 goto :end
 
