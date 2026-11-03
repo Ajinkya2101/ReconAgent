@@ -22,7 +22,7 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from . import config
+from . import config, security
 from .detectors import Finding
 from .events import contract
 from .events.derive import order_totals
@@ -182,8 +182,7 @@ class CorrectionBook:
         self.log_id: str | None = None   # the log the worklist reads now (set on every reload)
 
     def _save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.items, indent=2, default=str), encoding="utf-8")
+        security.write_json(self.path, self.items, indent=2, default=str)
 
     def current(self) -> list[dict]:
         return [c for c in self.items.values() if c.get("log_id") == self.log_id]

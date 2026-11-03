@@ -8,8 +8,7 @@
     {% if ai_available %}Answers come only from the Reconciliation API: positions, flags and decisions. {{ config.OCI_MODEL_ID }} on OCI Generative AI writes the words; every number is the engine's.
     {% else %}The AI assistant isn't connected here. Name a SKU number or part of an item name and you'll get the engine's data for it.{% endif %}
   </p>
-  <form class="ask" hx-post="/ask" hx-target="#answers" hx-swap="afterbegin" hx-disabled-elt="find button"
-        hx-on::after-request="if(event.detail.successful){this.reset()}">
+  <form class="ask" hx-post="/ask" hx-target="#answers" hx-swap="afterbegin" hx-disabled-elt="find button">
     <label for="question" class="sr">Question</label>
     <textarea id="question" name="question" rows="3" required maxlength="500" placeholder="Why is MIPS asking for more 150080?"></textarea>
     <div class="ask-row">

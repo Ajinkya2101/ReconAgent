@@ -57,8 +57,25 @@ HIGH_ACK_MINUTES = 15
 WEB_POLL_SECONDS = 20        # fallback poll; open screens normally hear of changes by server push
 WEB_WATCH_SECONDS = 0.5 if SOURCE_MODE == "events" else 2.0   # how often the server checks the feed
 
+# Sign-in (username and password) and sessions. See recon_agent/users.py and docs/DEPLOYMENT.md.
+USERS_FILE = Path(os.environ.get("RECON_USERS_FILE", OUTPUT_DIR / "users.json"))
+SECRET_KEY = os.environ.get("RECON_SECRET_KEY", "")   # signs session cookies; random per process if empty
+SESSION_HOURS = float(os.environ.get("RECON_SESSION_HOURS") or 12)
+# Secure cookies travel over HTTPS only (browsers also send them to http://localhost). Turn off only
+# for a plain-HTTP test server reached by another name.
+COOKIE_SECURE = os.environ.get("RECON_COOKIE_SECURE", "on").strip().lower() != "off"
+# Origins allowed to POST, comma-separated (e.g. https://recon.example.com). Empty: the request's own host.
+ALLOWED_ORIGINS = {o.strip().rstrip("/") for o in os.environ.get("RECON_ALLOWED_ORIGINS", "").split(",") if o.strip()}
+# Proxies whose X-Forwarded-For / X-Forwarded-Proto uvicorn trusts (the TLS terminator in front).
+FORWARDED_ALLOW_IPS = os.environ.get("RECON_FORWARDED_ALLOW_IPS", "127.0.0.1")
+API_DOCS = os.environ.get("RECON_API_DOCS", "off").strip().lower() == "on"   # Swagger UI at /api/docs
+# Failed sign-ins allowed per username, and per network address, in SIGNIN_WINDOW. The address limit
+# is higher: a plant floor often reaches the server through one shared address.
+SIGNIN_ATTEMPTS = 5
+SIGNIN_ATTEMPTS_PER_ADDRESS = 50
+SIGNIN_WINDOW_SECONDS = 15 * 60
+
 # Source simulator (python -m recon_agent simulate): the operator app that publishes events.
-SIM_PASSCODE = os.environ.get("RECON_SIM_PASSCODE", "")   # empty: name-only sign-in (local POC)
 WORKLIST_URL = os.environ.get("RECON_WORKLIST_URL", "http://localhost:8000/")
 # Write-back (event feed): the worklist sends approved corrections here. In the POC the source
 # simulator stands in for Oracle Integration; the token, if set, must match on both sides.

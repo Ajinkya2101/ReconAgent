@@ -9,8 +9,9 @@ nothing with it but the event log: it never reads the worklist's state, and the
 worklist never reads this app's. Only the worklist's consumer commits flow back
 (through the log), which gives the operator the worklist's lag and latency.
 
-Run it with `python -m recon_agent simulate` (port 8100). Synthetic data only;
-never deploy it next to a production worklist.
+Run it with `python -m recon_agent simulate` (port 8100). Operators sign in with
+the worklist's accounts (users.py). Synthetic data only; never deploy it next to a
+production worklist.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import config, sources
+from .. import __version__, config, security, sources, users
 from ..events import contract, scenarios, seed
 from ..events.clock import SimClock, parse_duration
 from ..events.derive import DERIVED, derive, order_totals
@@ -36,6 +37,7 @@ from ..events.projector import Projector
 
 HERE = Path(__file__).parent
 PRODUCER = "simulator"
+SESSION_COOKIE = "sim_session"
 SYSTEMS = {s: [e for e in contract.ENTITIES.values() if e.source == s] for s in contract.SOURCES}
 RATES = (1, 10, 60, 300)
 OIC_MODES = {"accept": "Accept and apply", "reject": "Reject every correction", "down": "Unavailable (503)"}
@@ -142,7 +144,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         yield
         stop.set()
 
-    app = FastAPI(title="Source simulator", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    if not config.USERS_FILE.exists():
+        print(f"No accounts yet ({config.USERS_FILE}): start the worklist once, or run "
+              "`python -m recon_agent users seed`.")
+    failed_by_user = security.RateLimiter(config.SIGNIN_ATTEMPTS, config.SIGNIN_WINDOW_SECONDS)
+    failed_by_address = security.RateLimiter(config.SIGNIN_ATTEMPTS_PER_ADDRESS, config.SIGNIN_WINDOW_SECONDS)
+    app = FastAPI(title="Source simulator", version=__version__, docs_url=None, redoc_url=None, openapi_url=None,
+                  lifespan=lifespan)
+    security.harden(app)
     app.mount("/static", StaticFiles(directory=HERE.parent / "web" / "static"), name="static")
     app.mount("/sim-static", StaticFiles(directory=HERE / "static"), name="sim-static")
     templates = Jinja2Templates(directory=HERE / "templates")
@@ -152,8 +161,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                                  SCENARIOS=scenarios.SCENARIOS, FAULT_KINDS=FAULT_KINDS, FAULT_PRESETS=FAULT_PRESETS,
                                  OIC_MODES=OIC_MODES)
 
+    def signed_in(request: Request) -> str:
+        """The signed-in operator's name, or "" (same accounts as the worklist)."""
+        session = security.unsign(request.cookies.get(SESSION_COOKIE), "simulator")
+        account = users.get(session["u"]) if session else None
+        return account["name"] if account and account["session"] == session.get("s") else ""
+
     def operator(request: Request) -> str:
-        name = request.cookies.get("sim_operator")
+        name = signed_in(request)
         if not name:
             target = "/signin?next=" + quote(str(request.url.path))
             raise HTTPException(status_code=303, headers={"Location": target, "HX-Redirect": target})
@@ -184,7 +199,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         return {"e": e, "page": page, "rows": projector.rows(e.name), "row_seq": projector.row_seq[e.name],
                 "counts": {n: len(t) for n, t in projector.tables.items()}, "clock": clock, "now": clock.now(),
                 "status": status(), "feed": log.source_tail(30)[::-1], "head": projector.seq,
-                "operator": request.cookies.get("sim_operator", ""), "run": run_state, **extra}
+                "operator": signed_in(request), "run": run_state, **extra}
 
     def render(request: Request, name: str, **c) -> HTMLResponse:
         return templates.TemplateResponse(request, name, c)
@@ -218,26 +233,42 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         return a == b or a in ("", None) and b in ("", None)
 
     # --- identity --------------------------------------------------------------
+    def signin_form(request: Request, target: str, username: str = "", error: str = "", status: int = 200):
+        resp = render(request, "signin.html", next=target, error=error, username=username)
+        resp.status_code = status
+        return resp
+
     @app.get("/signin", response_class=HTMLResponse)
-    def signin_page(request: Request, next: str = "/", error: str = ""):
-        return render(request, "signin.html", next=next, error=error, passcode=bool(config.SIM_PASSCODE))
+    def signin_page(request: Request, next: str = "/"):
+        return signin_form(request, security.safe_next(next))
 
     @app.post("/signin")
-    def signin(name: str = Form(...), passcode: str = Form(""), next: str = Form("/")):
-        name = name.strip()[:40]
-        target = next if next.startswith("/") and not next.startswith("//") else "/"
-        if config.SIM_PASSCODE and passcode != config.SIM_PASSCODE:
-            return RedirectResponse("/signin?error=passcode&next=" + quote(target), status_code=303)
-        resp = RedirectResponse(target if name else "/signin", status_code=303)
-        if name:
-            resp.set_cookie("sim_operator", name, httponly=True, samesite="lax")
+    def signin(request: Request, username: str = Form(...), password: str = Form(...), next: str = Form("/")):
+        username, target = username.strip().lower()[:40], security.safe_next(next)
+        address = security.client_ip(request)
+        if failed_by_user.blocked(username) or failed_by_address.blocked(address):
+            return signin_form(request, target, username, "Too many failed sign-ins. Wait 15 minutes and try again.", 429)
+        account = users.authenticate(username, password)
+        if not account:
+            failed_by_user.hit(username)
+            failed_by_address.hit(address)
+            return signin_form(request, target, username, "That username and password do not match.", 401)
+        failed_by_user.reset(username)
+        resp = RedirectResponse(target, status_code=303)
+        resp.set_cookie(SESSION_COOKIE, security.sign({"u": account["username"], "s": account["session"]}, "simulator"),
+                        max_age=int(config.SESSION_HOURS * 3600), httponly=True, samesite="lax",
+                        secure=config.COOKIE_SECURE)
         return resp
 
     @app.post("/signout")
     def signout():
         resp = RedirectResponse("/signin", status_code=303)
-        resp.delete_cookie("sim_operator")
+        resp.delete_cookie(SESSION_COOKIE, httponly=True, samesite="lax", secure=config.COOKIE_SECURE)
         return resp
+
+    @app.get("/healthz")
+    def healthz():
+        return {"status": "ok", "version": __version__}
 
     # --- pages -----------------------------------------------------------------
     @app.get("/")
@@ -496,7 +527,8 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         row no longer has the values the correction was computed from, 422 when rejected, 503
         when the endpoint is set to unavailable.
         """
-        if config.CORRECTIONS_TOKEN and request.headers.get("X-Corrections-Token") != config.CORRECTIONS_TOKEN:
+        if config.CORRECTIONS_TOKEN and not security.same_secret(request.headers.get("X-Corrections-Token"),
+                                                                  config.CORRECTIONS_TOKEN):
             return JSONResponse({"error": "not authorized"}, status_code=401)
         if oic["mode"] == "down":
             return JSONResponse({"error": "Oracle Integration is unavailable (simulated)"}, status_code=503)

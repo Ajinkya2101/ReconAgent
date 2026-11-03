@@ -5,20 +5,17 @@
 <main class="signin">
   <h1>Who's on shift?</h1>
   <p>Your name goes on every claim, acknowledgment and decision, so the next shift knows who did what.</p>
+  {% if error %}<p class="inline-error" role="alert">{{ error }}</p>{% endif %}
   <form method="post" action="/signin" class="signin-form">
     <input type="hidden" name="next" value="{{ next }}">
-    <label class="field"><span>Name</span>
-      <input name="name" required maxlength="40" autocomplete="name" autofocus></label>
-    <fieldset class="field">
-      <legend>Role</legend>
-      <div class="roles">
-        {% for r in roles %}
-        <label class="role"><input type="radio" name="role" value="{{ r }}" {% if r == "supervisor" %}checked{% endif %}><span>{{ r|capitalize }}</span></label>
-        {% endfor %}
-      </div>
-    </fieldset>
+    <label class="field"><span>Username</span>
+      <input name="username" value="{{ username }}" required maxlength="40" autocomplete="username"
+             autocapitalize="none" spellcheck="false" {% if not username %}autofocus{% endif %}></label>
+    <label class="field"><span>Password</span>
+      <input name="password" type="password" required maxlength="200" autocomplete="current-password"
+             {% if username %}autofocus{% endif %}></label>
     <button class="btn btn--primary" type="submit">Open the worklist</button>
   </form>
-  <p class="signin-note">In production, sign-in comes from OCI IAM Identity Domains and this screen goes away.</p>
+  <p class="signin-note">Your role comes with your account. Ask the worklist administrator for an account or a new password.</p>
 </main>
 {% endblock %}

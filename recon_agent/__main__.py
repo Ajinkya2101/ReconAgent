@@ -7,6 +7,8 @@
     python -m recon_agent serve [--host 0.0.0.0] [--port 8000]
     python -m recon_agent events seed | status | tail | show | set | insert | delete | clock | reset
     python -m recon_agent simulate [--host 0.0.0.0] [--port 8100]
+    python -m recon_agent users list | seed | add | passwd | role | remove
+    python -m recon_agent --version
 
 RECON_SOURCE=events makes run, ask, feedback and serve read the simulated event
 log instead of the Excel extracts (see docs/EVENT_CONTRACT.md).
@@ -19,7 +21,7 @@ from pathlib import Path
 
 import openpyxl
 
-from . import ai, config, engine, feedback, report
+from . import __version__, ai, config, engine, feedback, report, users
 from .events import cli as events_cli
 
 
@@ -74,22 +76,33 @@ def cmd_feedback(args) -> None:
     print(f"Recorded {args.decision} for {match.id}")
 
 
+def serve_options(args) -> dict:
+    # One process only: the worklist keeps claims and the change log in memory (no --workers).
+    # Behind a TLS proxy, uvicorn takes the client address and https scheme from X-Forwarded-*
+    # sent by the proxies in RECON_FORWARDED_ALLOW_IPS.
+    return {"host": args.host, "port": args.port, "proxy_headers": True,
+            "forwarded_allow_ips": config.FORWARDED_ALLOW_IPS, "server_header": False}
+
+
 def cmd_serve(args) -> None:
     import uvicorn
 
     from .web.app import create_app
-    uvicorn.run(create_app(args.data_dir), host=args.host, port=args.port)
+    print(f"Reconciliation worklist {__version__} on {args.host}:{args.port}")
+    uvicorn.run(create_app(args.data_dir), **serve_options(args))
 
 
 def cmd_simulate(args) -> None:
     import uvicorn
 
     from .simulator.app import create_app
-    uvicorn.run(create_app(), host=args.host, port=args.port)
+    print(f"Source simulator {__version__} on {args.host}:{args.port}")
+    uvicorn.run(create_app(), **serve_options(args))
 
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="recon_agent", description="MIPS-WMS-Oracle reconciliation agent")
+    ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     ap.add_argument("--data-dir", default=str(config.DATA_DIR))
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -120,6 +133,7 @@ def main(argv=None) -> None:
     p.set_defaults(func=cmd_simulate)
 
     events_cli.add_parser(sub)
+    users.add_parser(sub)
 
     args = ap.parse_args(argv)
     args.func(args)

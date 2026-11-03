@@ -69,6 +69,10 @@
       }
     }
   });
+  // A question that was answered clears the box for the next one.
+  document.addEventListener("htmx:afterRequest", (e) => {
+    if (e.detail.successful && e.detail.elt.matches?.("form.ask")) e.detail.elt.reset();
+  });
   window.addEventListener("popstate", () => {
     const m = location.pathname.match(/^\/row\/(.+)$/);
     markOpen(m ? decodeURIComponent(m[1]) : "");

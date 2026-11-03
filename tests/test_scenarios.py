@@ -14,6 +14,8 @@ import tempfile
 os.environ["RECON_AI"] = "off"
 os.environ.setdefault("RECON_TEST_DIR", tempfile.mkdtemp(prefix="recon-tests-"))
 os.environ["RECON_FEEDBACK_FILE"] = os.path.join(os.environ["RECON_TEST_DIR"], "feedback.json")
+os.environ["RECON_USERS_FILE"] = os.path.join(os.environ["RECON_TEST_DIR"], "users.json")
+os.environ["RECON_COOKIE_SECURE"] = "off"   # the test client talks plain http
 
 import datetime as dt
 import tempfile

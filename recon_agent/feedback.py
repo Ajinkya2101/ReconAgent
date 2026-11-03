@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import threading
 from pathlib import Path
 
-from . import config
+from . import config, security
 from .detectors import Finding
+
+_lock = threading.Lock()   # one read-modify-write of the decisions file at a time
 
 
 def load(path: Path = config.FEEDBACK_FILE) -> dict:
@@ -23,25 +26,25 @@ def load(path: Path = config.FEEDBACK_FILE) -> dict:
 
 
 def save(state: dict, path: Path = config.FEEDBACK_FILE) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    security.write_json(path, state, indent=2)
 
 
 def record(finding_id: str, units: float | None, decision: str, note: str = "", by: str = "") -> dict:
     decision = decision.lower()
     if decision not in ("accept", "reject"):
         raise ValueError("decision must be 'accept' or 'reject'")
-    state = load()
-    rule = finding_id.split("-", 1)[0]
-    stats = state["rules"].setdefault(rule, {"accept": 0, "reject": 0})
-    previous = state["decisions"].get(finding_id)
-    if previous:
-        stats[previous["decision"]] -= 1
-    stats[decision] += 1
-    state["decisions"][finding_id] = {"decision": decision, "units": units, "note": note, "by": by,
-                                      "at": dt.datetime.now().isoformat(timespec="seconds")}
-    save(state)
-    return state
+    with _lock:
+        state = load()
+        rule = finding_id.split("-", 1)[0]
+        stats = state["rules"].setdefault(rule, {"accept": 0, "reject": 0})
+        previous = state["decisions"].get(finding_id)
+        if previous:
+            stats[previous["decision"]] -= 1
+        stats[decision] += 1
+        state["decisions"][finding_id] = {"decision": decision, "units": units, "note": note, "by": by,
+                                          "at": dt.datetime.now().isoformat(timespec="seconds")}
+        save(state)
+        return state
 
 
 def rule_confidence(state: dict, rule: str) -> float:

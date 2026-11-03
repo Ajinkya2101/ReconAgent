@@ -13,6 +13,8 @@ import tempfile
 os.environ["RECON_AI"] = "off"
 os.environ.setdefault("RECON_TEST_DIR", tempfile.mkdtemp(prefix="recon-tests-"))
 os.environ["RECON_FEEDBACK_FILE"] = os.path.join(os.environ["RECON_TEST_DIR"], "feedback.json")
+os.environ["RECON_USERS_FILE"] = os.path.join(os.environ["RECON_TEST_DIR"], "users.json")
+os.environ["RECON_COOKIE_SECURE"] = "off"   # the test client talks plain http
 
 import datetime as dt
 import tempfile
@@ -22,7 +24,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from recon_agent import ai, sources
+from recon_agent import ai, security, sources, users
 from recon_agent.events import seed
 from recon_agent.events.clock import SimClock
 from recon_agent.events.log import Change, EventLog
@@ -31,6 +33,23 @@ from recon_agent.web.store import AI_READY, Store
 
 from recon_agent import config as _config
 assert "recon-tests-" in str(_config.FEEDBACK_FILE) and not _config.AI_ENABLED, "tests are not isolated"
+
+
+PASSWORD = "test-password-1"
+
+
+def sign_in(client: TestClient, username: str, role: str = "supervisor", name: str | None = None) -> None:
+    """Sign in through the real form, creating the account first (cheap hash: tests only)."""
+    if not users.get(username):
+        with mock.patch.object(security, "PBKDF2_ITERATIONS", 1000):
+            users.add(username, name or username.title(), role, PASSWORD)
+    r = client.post("/signin", data={"username": username, "password": PASSWORD}, follow_redirects=False)
+    assert r.status_code == 303, r.text
+
+
+with mock.patch.object(security, "PBKDF2_ITERATIONS", 1000):   # an accounts file exists: no demo seeding
+    if not users.get("ana"):
+        users.add("ana", "Ana", "supervisor", PASSWORD)
 
 NOW = dt.datetime(2026, 11, 6, 20, 0)
 
@@ -49,7 +68,7 @@ class SimulatorTest(unittest.TestCase):
     def setUp(self):
         self.log = seeded_log()
         self.client = TestClient(create_app(self.log.path))
-        self.client.cookies.set("sim_operator", "Ana")
+        sign_in(self.client, "ana", name="Ana")
         from recon_agent.events import contract
         self.contract = contract
 
@@ -185,7 +204,7 @@ class RealtimeTest(unittest.TestCase):
             from recon_agent.web.app import create_app as worklist
             app = worklist()
         client = TestClient(app)
-        client.cookies.set("recon_user", "Sam")
+        sign_in(client, "sam")
         store = app.state.store
         log.publish(Change("wms.item_order", "U", "WL-0015", {"Order Qty": 800}), "cli", NOW)
         store.refresh_if_sources_changed()

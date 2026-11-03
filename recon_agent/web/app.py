@@ -2,8 +2,8 @@
 
 HTML routes serve planners and supervisors (full pages, or fragments when htmx
 asks). /api/* is the Reconciliation API the architecture names, as JSON.
-Identity comes from the gateway (X-Remote-User / X-Remote-Role) and falls back
-to a sign-in cookie until OCI IAM is wired in.
+People sign in with a username and password (accounts in users.py); the role
+comes from the account. The session is a signed cookie (security.py).
 
 A background watcher reconciles as soon as the feed moves, and /stream pushes a
 `changed` event to every open screen, which then fetches /changes as before.
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import html
 import re
 import threading
 from contextlib import asynccontextmanager
@@ -24,11 +25,11 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import ai, config, sources
+from .. import __version__, ai, config, security, sources, users
 from .store import ACCEPTED, REJECTED, Row, Store, day_tag, ledger, next_sales_day
 
 HERE = Path(__file__).parent
-ROLES = ("planner", "supervisor", "manager")
+SESSION_COOKIE = "recon_session"
 APPROVERS = ("planner", "manager")   # who may approve write-back to a source system
 VIEWS = {"all": "Open", "ack": "Needs acknowledgment", "mine": "Claimed by me", "decided": "Decided"}
 
@@ -89,7 +90,10 @@ def watch(store: Store, stop: threading.Event) -> None:
 
 
 def create_app(data_dir: Path | None = None) -> FastAPI:
+    users.ensure_accounts()
     store = Store(sources.open_feed(data_dir))
+    failed_by_user = security.RateLimiter(config.SIGNIN_ATTEMPTS, config.SIGNIN_WINDOW_SECONDS)
+    failed_by_address = security.RateLimiter(config.SIGNIN_ATTEMPTS_PER_ADDRESS, config.SIGNIN_WINDOW_SECONDS)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -98,8 +102,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         yield
         stop.set()
 
-    app = FastAPI(title="Reconciliation worklist", docs_url="/api/docs", openapi_url="/api/openapi.json",
-                  lifespan=lifespan)
+    app = FastAPI(title="Reconciliation worklist", version=__version__, lifespan=lifespan,
+                  docs_url="/api/docs" if config.API_DOCS else None, redoc_url=None,
+                  openapi_url="/api/openapi.json" if config.API_DOCS else None)
+    security.harden(app, docs_path="/api/docs")
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     env = templates.env
@@ -109,11 +115,14 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                        config=config, store=store, ai_available=ai.credentials_available())
 
     def user_of(request: Request) -> dict | None:
-        name = request.headers.get("X-Remote-User") or request.cookies.get("recon_user")
-        if not name:
+        """The signed-in account. Name and role are read from the account on every request, so a
+        role change applies at once and a removed account or changed password ends the session."""
+        session = security.unsign(request.cookies.get(SESSION_COOKIE), "worklist")
+        account = users.get(session["u"]) if session else None
+        if not account or account["session"] != session.get("s"):
             return None
-        role = request.headers.get("X-Remote-Role") or request.cookies.get("recon_role") or "supervisor"
-        return {"name": name, "role": role, "initials": initials(name)}
+        return {"name": account["name"], "username": account["username"], "role": account["role"],
+                "initials": initials(account["name"])}
 
     def require_user(request: Request) -> dict:
         user = user_of(request)
@@ -145,24 +154,41 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     # --- identity ----------------------------------------------------------------
     @app.get("/signin", response_class=HTMLResponse)
     def signin_page(request: Request, next: str = "/"):
-        return render(request, "signin.html", next=next, roles=ROLES)
+        return render(request, "signin.html", next=security.safe_next(next), error="", username="")
 
     @app.post("/signin")
-    def signin(name: str = Form(...), role: str = Form("supervisor"), next: str = Form("/")):
-        name = name.strip()[:40]
-        target = next if next.startswith("/") and not next.startswith("//") else "/"
-        resp = RedirectResponse(target if name else "/signin", status_code=303)
-        if name:
-            resp.set_cookie("recon_user", name, httponly=True, samesite="lax")
-            resp.set_cookie("recon_role", role if role in ROLES else "supervisor", httponly=True, samesite="lax")
+    def signin(request: Request, username: str = Form(...), password: str = Form(...), next: str = Form("/")):
+        username, target = username.strip().lower()[:40], security.safe_next(next)
+        address = security.client_ip(request)
+        if failed_by_user.blocked(username) or failed_by_address.blocked(address):
+            return render_signin(request, target, username, "Too many failed sign-ins. Wait 15 minutes and try again.", 429)
+        account = users.authenticate(username, password)
+        if not account:
+            failed_by_user.hit(username)
+            failed_by_address.hit(address)
+            return render_signin(request, target, username, "That username and password do not match.", 401)
+        failed_by_user.reset(username)
+        resp = RedirectResponse(target, status_code=303)
+        resp.set_cookie(SESSION_COOKIE, security.sign({"u": account["username"], "s": account["session"]}, "worklist"),
+                        max_age=int(config.SESSION_HOURS * 3600), httponly=True, samesite="lax",
+                        secure=config.COOKIE_SECURE)
+        return resp
+
+    def render_signin(request: Request, target: str, username: str, error: str, status: int) -> HTMLResponse:
+        resp = render(request, "signin.html", next=target, error=error, username=username)
+        resp.status_code = status
         return resp
 
     @app.post("/signout")
     def signout():
         resp = RedirectResponse("/signin", status_code=303)
-        resp.delete_cookie("recon_user")
-        resp.delete_cookie("recon_role")
+        resp.delete_cookie(SESSION_COOKIE, httponly=True, samesite="lax", secure=config.COOKIE_SECURE)
         return resp
+
+    @app.get("/healthz")
+    def healthz():
+        """Liveness for the container and the load balancer: no session, no engine work."""
+        return {"status": "ok", "version": __version__, "source": store.feed.mode}
 
     # --- worklist ----------------------------------------------------------------
     @app.get("/", response_class=HTMLResponse)
@@ -372,7 +398,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             return RedirectResponse(exc.headers["Location"], status_code=303)
         if request.url.path.startswith("/api/") or not is_htmx(request):
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-        return HTMLResponse(f'<p class="inline-error" role="alert">{exc.detail}</p>', status_code=exc.status_code,
+        return HTMLResponse(f'<p class="inline-error" role="alert">{html.escape(str(exc.detail))}</p>',
+                            status_code=exc.status_code,
                             headers={"HX-Retarget": "#toast", "HX-Reswap": "innerHTML"})
 
     # --- assistant -------------------------------------------------------------------
