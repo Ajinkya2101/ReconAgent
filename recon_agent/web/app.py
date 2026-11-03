@@ -308,6 +308,17 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             return Response(status_code=204, headers={"HX-Refresh": "true"})
         return detail_response(request, store.rows.get(row.key, row), user)
 
+    @app.post("/simulation/reset")
+    def reset_simulation(request: Request):
+        """Demo control: back to the synthetic starting day (event feed only)."""
+        user = require_user(request)
+        if store.feed.mode != "events":
+            raise HTTPException(409, "Reset works on the simulated event feed only (RECON_SOURCE=events).")
+        store.reset_simulation(user["name"])
+        if is_htmx(request):
+            return Response(status_code=204, headers={"HX-Redirect": "/"})
+        return RedirectResponse("/", status_code=303)
+
     @app.get("/briefing", response_class=HTMLResponse)
     def briefing(request: Request):
         user = require_user(request)

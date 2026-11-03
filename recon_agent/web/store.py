@@ -25,6 +25,7 @@ from ..position import SkuPosition
 ACCEPTED = "Accepted - awaiting correction"
 REJECTED = "Rejected"
 AI_READY = "__ai__"   # change key: the AI text for this run has arrived
+SIM_RESET = "__reset__"   # change key: someone reset the simulation to the starting day
 SEVERITY_RANK = {"High": 3, "Medium": 2, "Low": 1}
 
 
@@ -304,6 +305,27 @@ class Store:
                 self._bump(AI_READY, "ai")
             else:   # the feed moved while the model was writing: explain what is new
                 self._schedule_ai()
+
+    def reset_simulation(self, user: str, sales_date: dt.date | None = None) -> None:
+        """Event feed only: back to the synthetic starting day, for the next demo.
+
+        Clears the event log and publishes the seed again, and clears the simulation's planner
+        decisions, claims and acknowledgments. Earlier corrections stay on file under the old log.
+        """
+        from ..events import seed
+
+        if self.feed.mode != "events":
+            raise RuntimeError("Reset works on the simulated event feed only (RECON_SOURCE=events).")
+        with self.lock:
+            self.feed.log.reset()
+            seed.seed(self.feed.log, sales_date or seed.DEFAULT_SALES_DATE)
+            feedback.save({"rules": {}, "decisions": {}})
+            self.claims.clear()
+            self.acks.clear()
+            self.first_seen.clear()
+            self.rows = {}
+            self.load()
+            self._bump(SIM_RESET, user)
 
     def refresh_if_sources_changed(self) -> None:
         position = self.feed.position()

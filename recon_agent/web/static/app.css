@@ -130,6 +130,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .changes-checked { color: var(--ink-3); }
 .changes-pill { display: inline-flex; align-items: center; text-decoration: none; border: 0; border-radius: 2px; background: var(--ink); color: #fff; font-size: var(--t-xs); font-weight: 650; height: 24px; padding: 0 9px; cursor: pointer; }
 .strip-actions { display: flex; align-items: center; gap: 4px; }
+.strip-reset { display: flex; }
 .strip-user { display: flex; align-items: center; gap: 2px; margin: 0; }
 .strip-claims b { font-size: var(--t-xs); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: inline-grid; place-items: center; background: var(--ink); color: #fff; }
 .who { display: inline-flex; align-items: center; gap: 8px; padding-left: 8px; }

@@ -13,6 +13,12 @@
   </p>
   <nav class="strip-actions" aria-label="Account and assistant">
     {% include "_strip_claims.html" %}
+    {% if store.feed.mode == "events" %}
+    <form class="strip-reset" method="post" action="/simulation/reset" hx-post="/simulation/reset"
+          hx-confirm="Reset the simulation to the starting day? This clears every change, scenario, fault, decision, claim and acknowledgment, for everyone, and re-publishes the synthetic seed.">
+      <button class="btn btn--quiet" type="submit" title="Reset the simulation to the starting day">{{ icon("refresh") }}<span>Reset simulation</span></button>
+    </form>
+    {% endif %}
     <button type="button" class="btn btn--quiet" data-assistant aria-controls="assistant" aria-expanded="false">{{ icon("chat") }}<span>Ask</span></button>
     <form method="post" action="/signout" class="strip-user">
       <span class="who" title="{{ user.name }} · {{ user.role }}"><span class="who-initials" aria-hidden="true">{{ user.initials }}</span><span class="who-name">{{ user.name }}</span><span class="who-role">{{ user.role }}</span></span>

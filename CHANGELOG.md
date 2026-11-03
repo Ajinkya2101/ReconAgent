@@ -6,6 +6,13 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+### Added
+- **Reset simulation** button in the worklist header (event feed only): back to the synthetic
+  starting day for the next demo. Clears the event log and re-publishes the seed, and clears the
+  simulation's decisions, claims and acknowledgments. Other open screens are told to reload.
+  `POST /simulation/reset`.
+- Simulation data documentation (`docs/simulation_data/`) and the application guide PDF.
+
 ## [0.2.0] - 2026-11-03
 
 Deployment readiness: the worklist can be shared with several people on a server.

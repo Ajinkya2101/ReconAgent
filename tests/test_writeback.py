@@ -172,5 +172,44 @@ class WriteBackTest(unittest.TestCase):
         self.assertEqual(planner.get(f"/api/corrections/{r.json()['correction']['id']}").json()["key"], "ML-0017")
 
 
+class ResetSimulationTest(unittest.TestCase):
+    def test_reset_from_the_worklist_returns_to_the_starting_day(self):
+        from recon_agent import feedback
+        from recon_agent.web.app import create_app as worklist
+        log = EventLog(Path(tempfile.mkdtemp(prefix="recon-reset-")) / "events.db")
+        seed.seed(log)
+        with mock.patch.object(sources, "open_feed", lambda *_: sources.EventFeed(log.path)):
+            app = worklist()
+        store = app.state.store
+        client = TestClient(app)
+        sign_in(client, "rita", "planner", "Rita")
+        # Change the day: fix route 27 (900107 drops out), claim and decide on other rows.
+        log.publish(Change("wms.item_order", "U", "WL-0015", {"Order Qty": 800}), "test", NOW)
+        store.refresh_if_sources_changed()
+        self.assertNotIn("900107", store.rows)
+        self.assertEqual(client.post("/row/900102/claim", headers={"HX-Request": "true"}).status_code, 200)
+        client.post("/flags/R05-900102/ack", headers={"HX-Request": "true"})
+        client.post("/flags/R05-900102/decision", data={"decision": "reject"}, headers={"HX-Request": "true"})
+        self.assertIn("R05-900102", feedback.load()["decisions"])
+        version = store.version
+
+        page = client.get("/").text
+        self.assertIn("Reset simulation", page)
+        r = client.post("/simulation/reset", headers={"HX-Request": "true"})
+        self.assertEqual(r.status_code, 204)
+        self.assertEqual(r.headers["HX-Redirect"], "/")
+
+        self.assertIn("900107", store.rows)                    # back to the seeded flags
+        self.assertEqual(log.source_position()[1], seed.seed(EventLog(Path(tempfile.mkdtemp()) / "e.db")))
+        self.assertEqual(store.claims, {})
+        self.assertEqual(store.acks, {})
+        self.assertIsNone(store.rows["900102"].claim)
+        self.assertEqual(feedback.load()["decisions"], {})
+        self.assertEqual(store.find("R05-900102")[1].status, "Open")
+        other = client.get(f"/changes?since={version}", headers={"HX-Request": "true"}).text
+        self.assertNotIn("Simulation reset", other)            # the one who reset is not told
+        self.assertIn("__reset__", store.changes_since(version, "someone else"))
+
+
 if __name__ == "__main__":
     unittest.main()
