@@ -287,13 +287,15 @@ CAUTION: If you see a "changed by others" button, push it before you make a deci
 ### 7.1 Sign in
 
 1. Open the worklist address in a web browser. Your IT team gives you this address (for example, `http://localhost:8001/`).
-2. On the "Who's on shift?" screen, type your name in the **Name** box.
-3. Select your role: **Planner**, **Supervisor** or **Manager**.
+2. On the "Who's on shift?" screen, type your username in the **Username** box.
+3. Type your password in the **Password** box.
 4. Push **Open the worklist**.
 
 Result: The Exception worklist opens.
 
-NOTE: The agent puts your name on each claim, acknowledgment and decision. Use your real name. In production, the plant sign-in system (OCI IAM Identity Domains) will replace this screen.
+NOTE: Your administrator gives you your username, password and role (Planner, Supervisor or Manager). The agent puts the name of your account on each claim, acknowledgment and decision. Do not give your password to other persons.
+
+NOTE: After 5 incorrect passwords, the agent stops your sign-in for 15 minutes. Wait, then try again, or ask the administrator for a new password.
 
 ### 7.2 Read the shift briefing
 
@@ -504,7 +506,9 @@ The change occurs immediately. All flags of the same rule move to their new posi
 
 | Problem | Possible cause | Corrective action |
 |---|---|---|
-| The sign-in screen opens again. | Your browser deleted the sign-in cookie. | Sign in again. Refer to Section 7.1. |
+| The sign-in screen opens again. | Your sign-in is older than 12 hours, your password changed, or your browser deleted the sign-in cookie. | Sign in again. Refer to Section 7.1. |
+| The screen shows "That username and password do not match". | The username or the password is incorrect. | Type them again. Make sure that Caps Lock is off. |
+| The screen shows "Too many failed sign-ins". | There were too many incorrect passwords for this username. | Wait 15 minutes. Then sign in again, or ask the administrator for a new password. |
 | The briefing shows "Rule text · AI text on the way". | The AI model is writing the explanations. | Wait. When the strip shows "AI explanations ready · Reload", push it. |
 | The briefing shows "Rule text · AI unavailable". | The agent cannot connect to the AI model. | Use the rule text. It contains all the numbers. Tell the IT team. |
 | The assistant says "The AI assistant isn't connected here". | The AI credentials are not set. | Type a SKU number or an item name. The assistant shows the agent data. |
@@ -525,7 +529,7 @@ The change occurs immediately. All flags of the same rule move to their new posi
 - The agent does not send SMS or Microsoft Teams alerts.
 - Rules R18 and R19 operate only in the simulation.
 - The returns data is not in the daily extracts. The "Returns and adjustments" line shows `—`. In the simulation, the line shows the returns to the plant.
-- The sign-in screen does not use a password. The plant sign-in system will replace it.
+- Each person signs in with a username and a password from the administrator. The plant sign-in system (OCI IAM) is not connected.
 - Claims and acknowledgments are lost when the server restarts. Decisions are kept.
 
 ### 11.2 Plan for Phase 2

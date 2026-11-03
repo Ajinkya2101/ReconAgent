@@ -90,7 +90,7 @@ Each `Finding` carries `rule`, `key`, `sku`, `units`, `unit_price`, `evidence` (
 | AI | OCI Python SDK (`oci`) → OCI Generative AI, model `google.gemini-2.5-pro`, on-demand in `us-chicago-1` | oci 2.189 | The only AI provider used; API-key auth |
 | Container | Docker, `python:3.12-slim`, non-root user `recon` (uid 10001) | — | `start_container.bat` builds and runs it on host port 8001 |
 
-`requirements.txt` lists the packages unpinned. Pin them before any production build.
+`requirements.txt` pins every runtime package; `requirements-dev.txt` adds the test client. Change a pin deliberately and note it in `CHANGELOG.md`.
 
 There is no database in Phase 1. State is held in process memory plus one JSON file (`output/feedback.json`).
 
@@ -113,7 +113,8 @@ There is no database in Phase 1. State is held in process memory plus one JSON f
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET/POST | `/signin`, POST `/signout` | Name + role cookie (stand-in for OCI IAM) |
+| GET/POST | `/signin`, POST `/signout` | Username and password sign-in; signed session cookie |
+| GET | `/healthz` | Liveness (no session): status, version, source mode |
 | GET | `/` | Worklist page |
 | GET | `/row/{key}` | Row detail (full page, or fragment for htmx) |
 | GET | `/queue` | Filtered queue fragment (`day`, `view`, `q`) |
@@ -138,11 +139,17 @@ There is no database in Phase 1. State is held in process memory plus one JSON f
 | POST | `/api/corrections` | Body `{"flag_id": "..."}`: approve and send the proposed correction (planner or manager) |
 | GET | `/api/corrections`, `/api/corrections/{id}` | Corrections with status history |
 
-OpenAPI docs are served at `/api/docs`.
+OpenAPI docs are served at `/api/docs` when `RECON_API_DOCS=on`.
 
 ### Identity
 
-`user_of()` takes the identity from the gateway headers `X-Remote-User` / `X-Remote-Role` and falls back to the sign-in cookies. Roles are `planner`, `supervisor` and `manager`. In Phase 1, roles are recorded but not enforced per endpoint. The sign-in screen has no password and exists only until OCI IAM Identity Domains is wired in behind API Gateway.
+People sign in with a username and password. Accounts live in `output/users.json` ([users.py](../recon_agent/users.py)): PBKDF2-SHA256 hashes (600,000 iterations), a display name, a role (`planner`, `supervisor`, `manager`) and a session counter. Manage them with `python -m recon_agent users list | seed | add | passwd | role | remove`. On first start, with no accounts file, the worklist creates the demo accounts and prints their passwords once (`RECON_DEMO_PASSWORD` sets one password for all of them).
+
+The session cookie (`recon_session`; the simulator's is `sim_session`) carries only the username and the session counter, signed with HMAC-SHA256 over `RECON_SECRET_KEY` and expiring after `RECON_SESSION_HOURS` ([security.py](../recon_agent/security.py)). `user_of()` reads the name and role from the account on every request, so a role change applies at once, and a password change (which bumps the counter) or a removed account ends the session. Request headers such as `X-Remote-User` are not trusted. Failed sign-ins are throttled: 5 per username and 50 per network address per 15 minutes.
+
+Only write-back approval is restricted by role (planners and managers). Every signed-in person can claim, acknowledge, accept and reject.
+
+Every response carries security headers (a Content-Security-Policy without `unsafe-eval`, frame denial, `nosniff`, referrer policy, HSTS over HTTPS, `no-store` on pages), and POST/PUT/PATCH/DELETE requests that a browser marks as cross-site are refused. Planner decisions and corrections are written atomically (temporary file, then rename).
 
 ## 5. AI layer
 
@@ -178,10 +185,17 @@ Thresholds and UI settings live in [config.py](../recon_agent/config.py). Enviro
 | `RECON_DATA_DIR` | `data/` | Folder holding the five extracts |
 | `RECON_EVENT_DB` | `output/sim/events.db` | Event log (SQLite) for `RECON_SOURCE=events` |
 | `RECON_AI` | `on` | `off` disables every model call, even with credentials (tests, offline demos) |
-| `RECON_SIM_PASSCODE` | empty | Passcode for the source simulator's sign-in; empty means a name only |
+| `RECON_SECRET_KEY` | random per process | Signs session cookies; set it on a server, or every restart signs everyone out |
+| `RECON_USERS_FILE` | `output/users.json` | Accounts (username, name, role, password hash) |
+| `RECON_DEMO_PASSWORD` | empty | One password for the demo accounts created on first start; empty means random ones, printed once |
+| `RECON_SESSION_HOURS` | `12` | How long a sign-in lasts |
+| `RECON_COOKIE_SECURE` | `on` | Session cookies over HTTPS only (browsers also accept them on `http://localhost`) |
+| `RECON_ALLOWED_ORIGINS` | the request's host | Origins allowed to POST, for a proxy that rewrites `Host` |
+| `RECON_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Proxies trusted for `X-Forwarded-For` / `-Proto` |
+| `RECON_API_DOCS` | `off` | `on` serves Swagger UI at `/api/docs` |
 | `RECON_WORKLIST_URL` | `http://localhost:8000/` | Target of the simulator's "Open worklist" button |
 | `RECON_CORRECTIONS_URL` | `http://127.0.0.1:8100/oic/corrections` | Where the worklist sends approved corrections (the simulator stands in for Oracle Integration) |
-| `RECON_CORRECTIONS_TOKEN` | empty | Shared token for that endpoint, if set on both sides |
+| `RECON_CORRECTIONS_TOKEN` | empty | Shared token for that endpoint, if set on both sides; set it whenever the simulator is reachable from another machine |
 | `RECON_FEEDBACK_FILE` | `output/feedback.json` (`output/sim/feedback.json` in event mode) | Planner decisions and rule stats |
 | `OCI_REGION` | `us-chicago-1` | GenAI region |
 | `OCI_COMPARTMENT_ID` | — | Required to enable AI |
@@ -230,14 +244,19 @@ python -m recon_agent simulate                                 # source simulato
 python -m unittest discover -s tests -v                        # test suite
 ```
 
-**Docker (Windows):** `start_container.bat` builds the `recon-agent:latest` image if it is missing. It then runs the container with the project folder bind-mounted at `/app` (so `data/` and `output/` live on the host), passes `.env` through, and exposes it on **http://localhost:8001/**. The subcommands are `build`, `shell`, `run`, `stop`, `remove`, `logs` and `status`. The image excludes `data/`, `docs/`, `.env` and all Office files. The container health check hits `/signin`.
+**Docker (Windows):** `start_container.bat` builds the `recon-agent:latest` image if it is missing. It then runs the container with the project folder bind-mounted at `/app` (so `data/` and `output/` live on the host), passes `.env` through, and exposes it on **http://localhost:8001/**. The subcommands are `build`, `shell`, `run`, `stop`, `remove`, `logs` and `status`. The image excludes `data/`, `docs/`, `.env` and all Office files. The container health check hits `/healthz`. `start_container.bat users ...` manages accounts inside the container.
+
+**Server deployment:** `docker-compose.yml` with the published image, optional TLS and the simulator profile. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## 9. Project layout
 
 ```
 .
 ├── recon_agent/               Application package
-│   ├── __main__.py            CLI: run | ask | feedback | serve
+│   ├── __init__.py            Package version (__version__)
+│   ├── __main__.py            CLI: run | ask | feedback | serve | simulate | events | users
+│   ├── security.py            Signed sessions, password hashing, security headers, atomic JSON writes
+│   ├── users.py               Sign-in accounts and the `users` command
 │   ├── config.py              Paths, source patterns, thresholds, OCI settings
 │   ├── ingest.py              Excel adapters → canonical records
 │   ├── position.py            Reconciled SKU position + allocation proposal
@@ -259,10 +278,13 @@ python -m unittest discover -s tests -v                        # test suite
 │   ├── USER_GUIDE.md          User and business guide (ASD-STE100)
 │   ├── TECHNICAL_OVERVIEW.md  This document
 │   ├── EVENT_CONTRACT.md      Event contract v1, simulated clock, synthetic dataset
+│   ├── DEPLOYMENT.md          Server deployment, HTTPS, accounts, releases
 │   └── reference/             Requirement brief and pitch decks from the client engagement
 ├── PRODUCT.md, DESIGN.md      Product context and design system (read by the Impeccable design tooling; keep at root)
-├── Dockerfile, .dockerignore, start_container.bat
-├── requirements.txt
+├── Dockerfile, .dockerignore, docker-compose.yml, deploy/Caddyfile, start_container.bat
+├── .github/workflows/         CI (tests, image build) and release (image to GHCR on a vX.Y.Z tag)
+├── pyproject.toml, CHANGELOG.md
+├── requirements.txt, requirements-dev.txt
 └── .env.example
 ```
 
@@ -280,9 +302,8 @@ This is from the architecture deck. None of it exists in this repo yet.
 ## 11. Known gaps
 
 - Tests cover the event feed, the eight scripted scenarios (which double as the rules' regression suite), integration faults and write-back (`tests/`), not the rules on real data. The validation run for 2026-09-12 (103 findings, $227,014 exposure with the current `feedback.json`) is still the regression baseline for the extracts.
-- The event feed is simulated. Its shape is an assumption until Bimbo IT confirms it ([EVENT_CONTRACT.md §6](EVENT_CONTRACT.md#6-assumptions-to-confirm-with-bimbo-it)). The simulator's operator sign-in is a name (plus an optional shared passcode), not OCI IAM.
+- The event feed is simulated. Its shape is an assumption until Bimbo IT confirms it ([EVENT_CONTRACT.md §6](EVENT_CONTRACT.md#6-assumptions-to-confirm-with-bimbo-it)). Sign-in uses local accounts (username and password), not OCI IAM.
 - Claims, acknowledgments and the change log are in memory, so a restart clears them. Only one process can run.
-- Roles are not enforced per endpoint. Sign-in is a name cookie.
+- Only write-back approval is restricted by role.
 - The returns/adjustments term of the net-requirement equation is 0 for the daily extracts; on the event feed it is the WMS return-to-plant quantity.
-- Dependencies are unpinned.
 - Open questions with the client cover the WMS product and APIs, MIPS database and GoldenGate access, the BUSS order feed, Oracle Fusion events, ticket/return/freezer-lot detail in WMS, the plant network and alert recipients per shift.

@@ -64,17 +64,18 @@ Open them side by side, for example the worklist on the left half of the screen 
 
 ![Worklist sign-in](images/wl-signin.png)
 
-1. Type your name. It goes on every claim, acknowledgment and decision you make.
-2. Pick your role: **Planner**, **Supervisor** or **Manager**. Only planners and managers can approve a correction (section 4.6).
-3. Click **Open the worklist**.
+1. Type your username and password. The administrator creates accounts; for a demo, use the demo accounts (`planner1`, `planner2`, `supervisor1`, `supervisor2`, `manager1`).
+2. Click **Open the worklist**.
+
+Your role (**Planner**, **Supervisor** or **Manager**) comes with your account. Only planners and managers can approve a correction (section 4.6). Your account's name goes on every claim, acknowledgment and decision you make.
 
 ### Sign in to the simulator
 
 ![Simulator sign-in](images/sim-signin.png)
 
-Type your name and click **Sign in**. Your name appears on every change you make.
+Sign in with the same username and password as the worklist. Your account's name appears on every change you make.
 
-> In production there is no sign-in screen. The plant's sign-in system (OCI IAM) identifies you. The simulator never runs in production.
+> The simulator is for demos and testing only. It never runs next to a production worklist.
 
 ---
 

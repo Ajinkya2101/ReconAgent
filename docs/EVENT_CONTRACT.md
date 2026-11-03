@@ -263,7 +263,7 @@ python -m recon_agent events status
 
 On PowerShell, set `$env:RECON_SOURCE="events"` first. Write-back needs the simulator running at `RECON_CORRECTIONS_URL`. The simulator's delivery pump is what delivers delayed changes, so keep it running when faults are active (CLI commands also deliver what is due when they run).
 
-**Simulator:** sign in with a name (set `RECON_SIM_PASSCODE` before sharing the URL). Synthetic data only; never run it next to a production worklist. It has:
+**Simulator:** sign in with a worklist account (username and password; set `RECON_CORRECTIONS_TOKEN` before sharing the URL). Synthetic data only; never run it next to a production worklist. It has:
 - **Tables:** one tab per entity, showing source truth, with an editor whose derived columns are recomputed as the source system would ([events/derive.py](../recon_agent/events/derive.py)).
 - **Source changes:** each change's column diff and its delivery state (event #, delayed, held, dropped, duplicate copy, on worklist).
 - **Clock controls** and **worklist lag and latency**.
