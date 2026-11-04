@@ -195,11 +195,11 @@ def harden(app: FastAPI, docs_path: str | None = None, favicon: str = "/static/f
     crawlers request whatever the page links, points at the app's SVG icon instead of a 404.
     """
 
-    @app.get("/robots.txt", include_in_schema=False)
+    @app.api_route("/robots.txt", methods=["GET", "HEAD"], include_in_schema=False)
     def robots_txt():
         return PlainTextResponse(ROBOTS_TXT)
 
-    @app.get("/favicon.ico", include_in_schema=False)
+    @app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
     def favicon_ico():
         return RedirectResponse(favicon, status_code=301)
 

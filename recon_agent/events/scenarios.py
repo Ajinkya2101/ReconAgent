@@ -224,7 +224,12 @@ def run(log: EventLog, scenario: Scenario, pause: float = 0.0,
         on_step: Callable[[int, Step, list[Event]], None] | None = None) -> list[Event]:
     """Play a scenario: advance the plant clock where a step says so, publish its changes in
     order (each through the normal path, so faults apply), and wait `pause` real seconds
-    between steps so a watcher sees each step land."""
+    between steps so a watcher sees each step land.
+
+    A step is one business transaction at the source (an item line and its order header, say),
+    so its changes commit together: a worklist reloading mid-step would otherwise reconcile a
+    half-applied step and show flags that vanish a moment later. Each change is resolved against
+    the committed rows, so a step must not touch the same row twice."""
     clock = SimClock(log, cache_seconds=0)
     sales = sales_date_of(log)
     published: list[Event] = []
@@ -234,13 +239,12 @@ def run(log: EventLog, scenario: Scenario, pause: float = 0.0,
         if step.advance:
             clock.advance(parse_duration(step.advance))
         events = []
-        for c in step.changes:
+        if step.changes:
             now = clock.now()
-            change = _resolve(log, c, now, sales)
-            change.scenario = scenario.id
-            ev = log.publish(change, producer=f"scenario:{scenario.id}", now=now)
-            if ev:
-                events.append(ev)
+            resolved = [_resolve(log, c, now, sales) for c in step.changes]
+            for change in resolved:
+                change.scenario = scenario.id
+            events = [ev for ev in log.publish_many(resolved, producer=f"scenario:{scenario.id}", now=now) if ev]
         published += events
         if on_step:
             on_step(i, step, events)

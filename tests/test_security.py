@@ -197,6 +197,8 @@ class WorklistSignInTest(unittest.TestCase):
         r = self.client.get("/favicon.ico", follow_redirects=False)
         self.assertEqual((r.status_code, r.headers["location"]), (301, "/static/favicon.svg"))
         self.assertEqual(self.client.get("/favicon.ico").headers["content-type"], "image/svg+xml")
+        self.assertEqual(self.client.head("/robots.txt").status_code, 200)   # crawlers often ask with HEAD
+        self.assertEqual(self.client.head("/favicon.ico", follow_redirects=False).status_code, 301)
 
     def test_health_and_docs(self):
         r = self.client.get("/healthz")

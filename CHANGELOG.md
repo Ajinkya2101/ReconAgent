@@ -16,7 +16,11 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 ### Fixed
 - `/robots.txt` (`Disallow: /`) and an `X-Robots-Tag: noindex, nofollow` header on both apps:
   search crawlers were fetching the public demo's sign-in page. `/favicon.ico` redirects to the
-  app's SVG icon instead of answering 404.
+  app's SVG icon instead of answering 404. Both answer HEAD as well as GET.
+- Scenarios commit each step as one source transaction (`EventLog.publish_many`). Steps were
+  published change by change, so a worklist that reloaded mid-step showed flags that vanished a
+  moment later: S7 flashed R02-900111, R09-900111 and R13-FILL-VS-ITEM (its item line landed
+  before its order header) before settling on R07-900111.
 
 ### Changed
 - Tests use `httpx2` (Starlette 1.9's test client deprecates plain `httpx`).

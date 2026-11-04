@@ -62,6 +62,25 @@ class ScenarioLibraryTest(unittest.TestCase):
                 self.assertEqual(before - after, set(sc.clears))
                 self.assertTrue(all(ev.producer == f"scenario:{sid}" for ev in log.tail(len(published))))
 
+    def test_a_step_lands_in_one_commit(self):
+        """Found on the deployed demo: S7 published its item line and its order header as two
+        commits, and a worklist that reloaded in between showed a phantom R13 (header vs items)."""
+        for sid, sc in scenarios.SCENARIOS.items():
+            with self.subTest(sid):
+                log, commits = seeded_log(), []
+                publish_many = log.publish_many
+
+                def spy(changes, *args, **kwargs):
+                    out = publish_many(changes, *args, **kwargs)
+                    commits.append(flags(log))   # what a worklist reloading now would show
+                    return out
+
+                log.publish_many = spy
+                scenarios.run(log, sc)
+                self.assertEqual(len(commits), sum(1 for s in sc.steps if s.changes))
+                if sid == "S7":
+                    self.assertFalse(any("R13-FILL-VS-ITEM" in f for f in commits))
+
     def test_a_scenario_needs_the_starting_rows(self):
         log = seeded_log()
         log.publish(Change("odi.finished_good", "D", "FG-0013"), "cli", NOW)
