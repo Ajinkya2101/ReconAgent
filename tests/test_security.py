@@ -187,7 +187,16 @@ class WorklistSignInTest(unittest.TestCase):
         self.assertEqual(r.headers["x-content-type-options"], "nosniff")
         self.assertEqual(r.headers["x-frame-options"], "DENY")
         self.assertEqual(r.headers["cache-control"], "no-store")
+        self.assertEqual(r.headers["x-robots-tag"], "noindex, nofollow")
         self.assertNotIn("server", r.headers)
+
+    def test_crawler_and_browser_files(self):
+        """Found on the deployed demo: crawlers fetched the sign-in page, and both files were 404."""
+        r = self.client.get("/robots.txt")
+        self.assertEqual((r.status_code, r.text), (200, "User-agent: *\nDisallow: /\n"))
+        r = self.client.get("/favicon.ico", follow_redirects=False)
+        self.assertEqual((r.status_code, r.headers["location"]), (301, "/static/favicon.svg"))
+        self.assertEqual(self.client.get("/favicon.ico").headers["content-type"], "image/svg+xml")
 
     def test_health_and_docs(self):
         r = self.client.get("/healthz")
@@ -216,6 +225,14 @@ class SimulatorSignInTest(unittest.TestCase):
         a = account("ana")
         self.client.cookies.set("sim_session", security.sign({"u": a["username"], "s": a["session"]}, "worklist"))
         self.assertEqual(self.client.get("/t/wms.order", follow_redirects=False).status_code, 303)
+
+    def test_crawler_and_browser_files(self):
+        r = self.client.get("/robots.txt")
+        self.assertEqual((r.status_code, r.text), (200, "User-agent: *\nDisallow: /\n"))
+        self.assertEqual(r.headers["x-robots-tag"], "noindex, nofollow")
+        r = self.client.get("/favicon.ico", follow_redirects=False)
+        self.assertEqual((r.status_code, r.headers["location"]), (301, "/sim-static/favicon.svg"))
+        self.assertEqual(self.client.get("/favicon.ico").status_code, 200)
 
     def test_corrections_token_is_enforced_when_set(self):
         with mock.patch.object(_config, "CORRECTIONS_TOKEN", "s3cret-token"):

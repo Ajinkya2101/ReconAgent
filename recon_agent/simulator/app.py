@@ -151,7 +151,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     failed_by_address = security.RateLimiter(config.SIGNIN_ATTEMPTS_PER_ADDRESS, config.SIGNIN_WINDOW_SECONDS)
     app = FastAPI(title="Source simulator", version=__version__, docs_url=None, redoc_url=None, openapi_url=None,
                   lifespan=lifespan)
-    security.harden(app)
+    security.harden(app, favicon="/sim-static/favicon.svg")
     app.mount("/static", StaticFiles(directory=HERE.parent / "web" / "static"), name="static")
     app.mount("/sim-static", StaticFiles(directory=HERE / "static"), name="sim-static")
     templates = Jinja2Templates(directory=HERE / "templates")

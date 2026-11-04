@@ -22,7 +22,7 @@ from collections import deque
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 
 from . import config
 
@@ -184,8 +184,24 @@ def cross_site(request: Request) -> bool:
     return origin.rstrip("/") not in allowed
 
 
-def harden(app: FastAPI, docs_path: str | None = None) -> None:
-    """Security headers on every response; cross-site POST/PUT/PATCH/DELETE refused."""
+ROBOTS_TXT = "User-agent: *\nDisallow: /\n"
+
+
+def harden(app: FastAPI, docs_path: str | None = None, favicon: str = "/static/favicon.svg") -> None:
+    """Security headers on every response; cross-site POST/PUT/PATCH/DELETE refused.
+
+    Both apps are internal tools: /robots.txt and an X-Robots-Tag header keep search engines
+    from indexing them (the sign-in page included), and /favicon.ico, which browsers and
+    crawlers request whatever the page links, points at the app's SVG icon instead of a 404.
+    """
+
+    @app.get("/robots.txt", include_in_schema=False)
+    def robots_txt():
+        return PlainTextResponse(ROBOTS_TXT)
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def favicon_ico():
+        return RedirectResponse(favicon, status_code=301)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -200,6 +216,7 @@ def harden(app: FastAPI, docs_path: str | None = None) -> None:
         h.setdefault("Referrer-Policy", "same-origin")
         h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
         h.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        h.setdefault("X-Robots-Tag", "noindex, nofollow")
         if request.url.scheme == "https":
             h.setdefault("Strict-Transport-Security", "max-age=31536000")
         if not path.startswith(("/static/", "/sim-static/")):

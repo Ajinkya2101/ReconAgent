@@ -13,6 +13,14 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
   `POST /simulation/reset`.
 - Simulation data documentation (`docs/simulation_data/`) and the application guide PDF.
 
+### Fixed
+- `/robots.txt` (`Disallow: /`) and an `X-Robots-Tag: noindex, nofollow` header on both apps:
+  search crawlers were fetching the public demo's sign-in page. `/favicon.ico` redirects to the
+  app's SVG icon instead of answering 404.
+
+### Changed
+- Tests use `httpx2` (Starlette 1.9's test client deprecates plain `httpx`).
+
 ## [0.2.0] - 2026-11-03
 
 Deployment readiness: the worklist can be shared with several people on a server.
