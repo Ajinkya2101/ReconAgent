@@ -9,6 +9,14 @@ key the projector never saw is applied as an insert, so a late-joining reader
 still converges); delete removes the key. Rows come out in key order (the
 source's own line sequence), so the result never depends on the order in which
 events for different rows arrived.
+
+Demand at order time: the agent infers the inventory MIPS netted as the SKU's demand
+less what its first production run ordered. That only holds for the demand MIPS saw
+when it sized the run, so the projector also keeps each MIPS line's quantity history
+and the source position at which each ODI run's order was last set. `demand_at_order`
+rebuilds each SKU's demand as of that position, so a later demand change reads as new
+demand, not as inventory. Positions are source sequence numbers (the seed is the
+opening snapshot, position 0), so the answer does not depend on delivery order either.
 """
 from __future__ import annotations
 
@@ -27,6 +35,10 @@ EXTRACTS = {
     "wms_fill_rate": "wms.order",
     "wms_order_summary": "wms.item_order",
 }
+
+# Producer of the opening load (seed.py). Its rows are what the plant knew when production was
+# ordered, whatever order they were committed in; history for demand_at_order starts after it.
+INITIAL_LOAD = "seed"
 
 
 class Projector:
@@ -51,6 +63,10 @@ class Projector:
         self.duplicates_ignored = 0
         self.stale_ignored = 0
         self.last_source_ts: dt.datetime | None = None
+        # For demand_at_order: (position, SKU or None once deleted, quantity) per MIPS line,
+        # and the position at which each ODI run's order (quantity or SKU) was last set.
+        self.line_history: dict[str, list[tuple[int, str | None, float]]] = {}
+        self.order_set_at: dict[str, int] = {}
 
     def catch_up(self) -> int:
         """Apply new events. Starts over if the log was reset. Returns how many were read."""
@@ -76,13 +92,46 @@ class Projector:
             return
         self.row_source_seq[ev.entity][ev.key] = ev.source_seq
         table = self.tables[ev.entity]
+        old = table.get(ev.key)
         if ev.op == "D":
             table.pop(ev.key, None)
             self.row_seq[ev.entity].pop(ev.key, None)
         else:
             table[ev.key] = contract.decode(contract.ENTITIES[ev.entity], ev.after)
             self.row_seq[ev.entity][ev.key] = ev.seq
+        self._track_demand(ev, old, table.get(ev.key))
         self.last_source_ts = ev.source_ts
+
+    def _track_demand(self, ev: Event, old: dict | None, new: dict | None) -> None:
+        at = 0 if ev.producer == INITIAL_LOAD else ev.source_seq
+        if ev.entity == "mips.order_line":
+            self.line_history.setdefault(ev.key, []).append(
+                (at, ingest.norm_sku(new["FG Oracle Ref"]) if new and new["FG Oracle Ref"] is not None else None,
+                 ingest.num(new["Order Quantity"]) if new else 0.0))
+        elif ev.entity == "odi.finished_good" and (
+                old is None or new is None
+                or any(old.get(c) != new.get(c) for c in ("NetUnitsOrdered", "OracleFGNumber"))):
+            self.order_set_at[ev.key] = at
+
+    def demand_at_order(self) -> dict[str, float]:
+        """Each SKU's MIPS demand at the source position where its first active run's order was last set."""
+        runs = sorted(((k, r) for k, r in sorted(self.tables["odi.finished_good"].items())
+                       if ingest.num(r["NetUnitsOrdered"]) or ingest.num(r["ActualWrappedUnits"])),
+                      key=lambda kr: (kr[1]["ProductionStartDateTime"] is None,
+                                      kr[1]["ProductionStartDateTime"] or dt.datetime.min))
+        first: dict[str, str] = {}
+        for k, r in runs:   # same order as position.build_positions, so the same run is "first"
+            first.setdefault(ingest.norm_sku(r["OracleFGNumber"]), k)
+        out: dict[str, float] = {}
+        for sku, run_key in first.items():
+            at = self.order_set_at.get(run_key, 0)
+            total = 0.0
+            for history in self.line_history.values():
+                then = max((h for h in history if h[0] <= at), key=lambda h: h[0], default=None)
+                if then and then[1] == sku:
+                    total += then[2]
+            out[sku] = total
+        return out
 
     def rows(self, entity: str) -> list[dict]:
         table = self.tables[entity]
@@ -104,4 +153,5 @@ class Projector:
             tickets=ingest.wms_tickets(self.rows("wms.ticket")),
             wms_txns=ingest.wms_transactions(self.rows("wms.transaction")),
             oracle_txns=ingest.oracle_transactions(self.rows("oracle.inventory_txn")),
+            demand_at_order=self.demand_at_order(),
         )

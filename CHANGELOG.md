@@ -14,6 +14,22 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 - Simulation data documentation (`docs/simulation_data/`) and the application guide PDF.
 
 ### Fixed
+- The reconciled position stays arithmetically consistent when a source row is edited
+  (`tests/test_consistency.py` edits every MIPS line and ODI run of the starting day):
+  - A MIPS demand change after production was ordered read as inventory. Inventory is inferred as
+    demand less the first run's order, so raising 900102 from 6,000 to 7,200 showed 1,200 of
+    inventory, kept the 1,200 surplus and R05, and added a false R01. The projector now keeps the
+    demand each SKU's first run was ordered against (`SourceData.demand_at_order`). A later change
+    moves the net requirement one for one, and the card shows it ("+1,200 since production was
+    ordered"). Re-ordering the first run takes up the new demand.
+  - R05 measured the over-build as wrapped beyond the requirement, and fired on total orders
+    above demand. A right-sized recovery run raised a 0-unit flag, and an over-sized one that
+    had not wrapped yet showed 0 units. It now takes the larger of the recovery order beyond the
+    shortfall and the units wrapped beyond the requirement.
+  - The card's bar counted returned units as usable supply, so S5 showed "Still to produce 120"
+    with no shortfall on the bar. The bar now draws the equation. R07's text quotes usable supply.
+  - A return booked only on the WMS ticket (Returned Qty) did not reach the position. Returns are
+    now the larger of the return transactions and the ticket's figure, per ticket.
 - `/robots.txt` (`Disallow: /`) and an `X-Robots-Tag: noindex, nofollow` header on both apps:
   search crawlers were fetching the public demo's sign-in page. `/favicon.ico` redirects to the
   app's SVG icon instead of answering 404. Both answer HEAD as well as GET.

@@ -479,11 +479,13 @@ def ledger(row: Row) -> dict | None:
     def pct(x: float) -> float:
         return round(100 * x / scale, 2)
 
+    # The bar draws the equation: returned units are not usable, so surplus and short are the net.
     inv_in = min(inventory, demand)
-    wrap_in = min(wrapped, demand - inv_in)
-    surplus, short = max(0.0, supply - demand), max(0.0, demand - supply)
+    wrap_in = min(max(wrapped - p.returns, 0.0), demand - inv_in)
+    surplus, short = max(0.0, -p.net_requirement), max(0.0, p.net_requirement)
     return {
         "demand": demand, "inventory": inventory, "wrapped": wrapped, "net": p.net_requirement,
+        "returns": p.returns, "demand_at_order": p.demand_at_order, "after_order": p.demand_after_order,
         "surplus": surplus, "short": short, "lines": len(p.lines),
         "sales_orders": p.demand_sales_orders, "supply_plan": p.demand_supply_plan, "moved": p.demand_moved,
         "pct": {"demand": pct(demand), "inv": pct(inv_in), "wrap": pct(wrap_in), "surplus": pct(surplus),

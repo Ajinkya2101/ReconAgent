@@ -33,11 +33,11 @@
     <dl class="equation">
       <div class="eq-row">
         <dt><span class="eq-op" aria-hidden="true"></span>Demand, all {{ L.lines }} MIPS {{ "line" if L.lines == 1 else "lines" }}
-          <small>sales orders {{ L.sales_orders|num }} · supply plan {{ L.supply_plan|num }}{% if L.moved %} · {{ L.moved|num }} on moved lines{% endif %}</small></dt>
+          <small>sales orders {{ L.sales_orders|num }} · supply plan {{ L.supply_plan|num }}{% if L.moved %} · {{ L.moved|num }} on moved lines{% endif %}{% if L.after_order %} · {{ "+" if L.after_order > 0 else "−" }}{{ L.after_order|abs|num }} since production was ordered{% endif %}</small></dt>
         <dd>{{ L.demand|num }}</dd>
       </div>
       <div class="eq-row">
-        <dt><span class="eq-op" aria-hidden="true">−</span>Inventory applied <small>MIPS, netted before production</small></dt>
+        <dt><span class="eq-op" aria-hidden="true">−</span>Inventory applied <small>MIPS, netted before production{% if L.after_order %} from the {{ L.demand_at_order|num }} demand it was ordered against{% endif %}</small></dt>
         <dd>{{ L.inventory|num }}</dd>
       </div>
       <div class="eq-row">
@@ -64,7 +64,7 @@
     {% set next = day_tag(L.next_day) %}
     <figure class="track{% if row.carry_accepted %} is-retagged{% endif %}{% if retag_now %} retag-now{% endif %}"
             style="--from:{{ today.fill }};--to:{{ next.fill }};--demand:{{ L.pct.demand }}%">
-      <figcaption class="sr">Supply against demand on one scale: inventory {{ L.inventory|num }}, wrapped {{ L.wrapped|num }}, demand {{ L.demand|num }}{% if L.surplus %}, surplus {{ L.surplus|num }}{% endif %}{% if L.short %}, short {{ L.short|num }}{% endif %}.</figcaption>
+      <figcaption class="sr">Supply against demand on one scale: inventory {{ L.inventory|num }}, wrapped {{ L.wrapped|num }}{% if L.returns %} of which {{ L.returns|num }} returned{% endif %}, demand {{ L.demand|num }}{% if L.surplus %}, surplus {{ L.surplus|num }}{% endif %}{% if L.short %}, short {{ L.short|num }}{% endif %}.</figcaption>
       <div class="track-bar" aria-hidden="true">
         <span class="seg seg--inv" style="left:0;width:{{ L.pct.inv }}%"></span>
         <span class="seg seg--wrap" style="left:{{ L.pct.inv }}%;width:{{ L.pct.wrap }}%"></span>
@@ -74,7 +74,7 @@
       </div>
       <div class="track-legend" aria-hidden="true">
         <span><i class="key key--inv"></i>Inventory {{ L.inventory|num }}</span>
-        <span><i class="key key--wrap"></i>Wrapped {{ L.wrapped|num }}</span>
+        <span><i class="key key--wrap"></i>Wrapped {{ L.wrapped|num }}{% if L.returns %} · {{ L.returns|num }} returned{% endif %}</span>
         <span class="track-demand-label">Demand {{ L.demand|num }}</span>
         {% if L.surplus %}
         <span class="track-carry">

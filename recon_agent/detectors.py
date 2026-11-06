@@ -127,12 +127,16 @@ def r02_untraceable_inventory(p: SkuPosition) -> list[Finding]:
             or any(r.net_units_ordered < 0 for r in p.runs)):
         return []
     sent = p.active_runs[0].net_units_ordered
+    later = p.demand_after_order
     return [Finding(
         "R02", p.sku, p.sku, p.description, p.implied_inventory, p.unit_price,
-        evidence={"mips_demand": p.demand_total, "odi_net_ordered_first_run": sent,
-                  "mips_beginning_inventory_recorded": p.recorded_inventory},
+        evidence={"mips_demand": p.demand_at_order, "odi_net_ordered_first_run": sent,
+                  "mips_beginning_inventory_recorded": p.recorded_inventory,
+                  **({"demand_changed_after_order": later} if later else {})},
         recommendation=(
-            f"MIPS sent {_fmt(sent)} to production against {_fmt(p.demand_total)} demand, so "
+            f"MIPS sent {_fmt(sent)} to production against {_fmt(p.demand_at_order)} demand"
+            + (f" (demand has since changed by {later:+,.0f}, which is new demand, not inventory)" if later else "")
+            + ", so "
             f"{_fmt(p.implied_inventory)} units of inventory were applied - but MIPSBeginningInventoryQty "
             f"is 0. Identify the schedule line holding that inventory (likely a zero-qty or planning line) "
             f"and record it as beginning inventory so WMS tickets and Oracle can trace it."),
@@ -143,27 +147,34 @@ def r05_recovery_run(p: SkuPosition) -> list[Finding]:
     runs = p.active_runs
     if len(runs) < 2:
         return []
-    overbuild = p.wrapped - p.consolidated_requirement
-    reordered = p.net_ordered - p.demand_total
-    if overbuild < config.OVERPRODUCTION_MIN_UNITS and reordered < config.OVERPRODUCTION_MIN_UNITS:
-        return []
     first, *rest = runs
+    # A recovery run should make only what run 1 left short of the requirement. It over-builds by
+    # what it ordered beyond that (even before it wraps) or by what was wrapped beyond the
+    # requirement (when it over-ran its own order), whichever is larger.
+    remaining = max(0.0, p.consolidated_requirement - first.wrapped_units)
+    recovery_ordered = sum(r.net_units_ordered for r in rest)
+    overbuilt = p.wrapped - p.consolidated_requirement
+    overbuild = max(recovery_ordered - remaining, overbuilt, 0.0)
+    if overbuild < config.OVERPRODUCTION_MIN_UNITS:
+        return []
     detail = "; ".join(f"{_run_label(r)}: ordered {_fmt(r.net_units_ordered)}, wrapped "
                        f"{_fmt(r.wrapped_units)} ({r.expected_ending_inventory:+,.0f})" for r in runs)
-    remaining = max(0.0, p.consolidated_requirement - first.wrapped_units)
+    action = (f"Apply the {_fmt(overbuild)}-unit surplus to the next sales day for this SKU (or designate to "
+              f"freezer)" if overbuilt >= overbuild else
+              f"Cut the open recovery order to the {_fmt(remaining)} still needed before it wraps; as ordered it "
+              f"makes {_fmt(overbuild)} too many")
     return [Finding(
-        "R05", p.sku, p.sku, p.description, max(overbuild, 0), p.unit_price,
+        "R05", p.sku, p.sku, p.description, overbuild, p.unit_price,
         evidence={"runs": detail, "demand": p.demand_total, "net_ordered_all_runs": p.net_ordered,
                   "wrapped_all_runs": p.wrapped, "need_after_first_run": remaining},
         recommendation=(
             f"After run 1 wrapped {_fmt(first.wrapped_units)}, "
             + (f"only {_fmt(remaining)} units were still needed" if remaining else
                "the SKU requirement was already covered")
-            + f", but the recovery run(s) ordered {_fmt(sum(r.net_units_ordered for r in rest))}. Across runs ODI ordered "
+            + f", but the recovery run(s) ordered {_fmt(recovery_ordered)}. Across runs ODI ordered "
             f"{_fmt(p.net_ordered)} against {_fmt(p.demand_total)} MIPS demand and "
-            f"{_fmt(p.wrapped)} were wrapped. Apply the {_fmt(max(overbuild, 0))}-unit surplus to "
-            f"the next sales day for this SKU (or designate to freezer) and size future recovery "
-            f"runs to the remaining shortfall only."),
+            f"{_fmt(p.wrapped)} were wrapped. {action}, and size future recovery runs to the remaining "
+            f"shortfall only."),
         severity="High" if overbuild >= 1000 else "Medium",
         systems=["MIPS", "ODI"])]
 
@@ -194,11 +205,13 @@ def r07_untracked_supply(p: SkuPosition) -> list[Finding]:
         "R07", p.sku, p.sku, p.description, gap, p.unit_price,
         evidence={"demand": p.demand_total, "inventory_applied": p.implied_inventory,
                   "wrapped": p.wrapped, "wms_allocated": p.wms_allocated,
-                  "moved_demand": p.demand_moved, "odi_runs": len(p.active_runs)},
+                  "moved_demand": p.demand_moved, "odi_runs": len(p.active_runs),
+                  **({"returned_to_plant": p.returns} if p.returns else {})},
         recommendation=(
             f"WMS allocated the full {_fmt(p.wms_allocated)} units, yet production plus applied "
-            f"inventory only covers {_fmt(p.implied_inventory + p.wrapped)} of {_fmt(p.demand_total)} "
-            f"demand. {_fmt(gap)} units came from stock MIPS does not see (freezer or prior-day tickets)"
+            f"inventory only covers {_fmt(p.usable_supply)} of {_fmt(p.demand_total)} demand"
+            + (f" ({_fmt(p.returns)} of the {_fmt(p.wrapped)} wrapped went back to the plant)" if p.returns else "")
+            + f". {_fmt(gap)} units came from stock MIPS does not see (freezer or prior-day tickets)"
             + (f", or part of the {_fmt(p.demand_moved)} units moved to the prior sales day went unfilled"
                if p.demand_moved else "") +
             f". Confirm the freezer/ticket draw in WMS and deduct it in MIPS; otherwise freezer balances "

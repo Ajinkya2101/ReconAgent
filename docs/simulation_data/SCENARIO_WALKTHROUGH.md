@@ -84,12 +84,13 @@ References in this document look like **`MIPS Order Lines` r6**, meaning sheet *
 | **Active run** | a run with a non-zero ordered or wrapped quantity | `NetUnitsOrdered`, `ActualWrappedUnits` |
 | **Net ordered** | sum over the item's runs | `odi.finished_good.NetUnitsOrdered` |
 | **Wrapped** | sum over the item's runs | `ActualWrappedUnits` |
-| **Implied inventory** | inventory MIPS netted out before sending demand to production. One active run: Demand − Net ordered. Two or more: Demand − the *first* run's order. Never below 0. | derived |
+| **Implied inventory** | inventory MIPS netted out before sending demand to production: Demand at order − the *first* active run's order. Never below 0. | derived |
+| **Demand at order** | the demand when the first active run's order was last set. The seed is the opening snapshot, so on the untouched day it equals Demand. A later MIPS change (edit, new or deleted line) is new demand, not inventory; re-ordering the first run takes it up | event history |
 | **Recorded inventory** | sum over the item's runs | `MIPSBeginningInventoryQty + MIPSInventoryAdjustmentQty` |
 | **Consolidated requirement** | Demand − Implied inventory (≥ 0): what the plant should make | derived |
 | **First-line-only requirement** | Demand − min(Implied inventory, first line's quantity): what MIPS asks for if it nets inventory against the first line only | derived |
 | **First-line risk** | First-line-only requirement − Consolidated requirement (≥ 0) | derived |
-| **Returns** | units WMS returned to the plant | `wms.transaction.Qty` where `Txn Type` = RETURN_TO_PLANT |
+| **Returns** | units WMS returned to the plant: per ticket, the larger of the RETURN_TO_PLANT transactions and the ticket's `Returned Qty` | `wms.transaction.Qty`, `wms.ticket.Returned Qty` |
 | **Net requirement** | Demand − Implied inventory − Wrapped + Returns. Positive = still to supply; negative = surplus | derived |
 | **WMS ordered / allocated** | sum over the item's customer lines | `wms.item_order.Order Qty`, `Allocated Units Qty` |
 | **Unit price** | the first non-zero MIPS price, else $3.99 | `Retail Price` |
@@ -102,7 +103,7 @@ References in this document look like **`MIPS Order Lines` r6**, meaning sheet *
 | **R02** Inventory netted without audit trail | Implied inventory > 0, Recorded inventory = 0, no R01 risk, no negative run | Implied inventory | Medium |
 | **R03** Blind line | a run with ordered = 0 and wrapped = 0 that is not a ghost (it has a shift) | 0 | Low |
 | **R04** Ghost of a moved run | a zero run with **no shift**, whose formula (ignoring a trailing "A") produced output on another line | 0 | Medium |
-| **R05** Recovery run over-built | 2+ active runs and either (Wrapped − Consolidated requirement) ≥ 100 or (Net ordered − Demand) ≥ 100 | Wrapped − Consolidated requirement | High at ≥ 1,000, else Medium |
+| **R05** Recovery run over-built | 2+ active runs and Over-build ≥ 100, where Over-build = the larger of (Recovery ordered − Still needed after run 1) and (Wrapped − Consolidated requirement) | Over-build | High at ≥ 1,000, else Medium |
 | **R06** Surplus not carried forward | exactly 1 active run, surplus (−Net requirement) ≥ 50, no negative run | surplus | Medium at ≥ 1,000, else Low |
 | **R07** Filled from untracked stock | Net requirement ≥ 20 and WMS allocated ≥ Sales-day demand | Net requirement | High at ≥ 500, else Medium |
 | **R08** Negative net order | any run with `NetUnitsOrdered` < 0 | −(sum of negative orders) | Medium |
@@ -157,10 +158,13 @@ Active runs               = 2 (FG-0002, FG-0003)
 Implied inventory         = Demand − first run's order   = 6,000 − 6,000 = 0
 Consolidated requirement  = 6,000 − 0                    = 6,000
 Wrapped                   = 5,200 + 2,000                = 7,200
-Over-build                = Wrapped − Consolidated       = 7,200 − 6,000 = 1,200   (≥ 100 → R05)
-Re-ordered                = Net ordered − Demand         = 8,000 − 6,000 = 2,000
 Still needed after run 1  = 6,000 − 5,200                = 800
+Recovery ordered beyond   = 2,000 − 800                  = 1,200
+Wrapped beyond            = Wrapped − Consolidated       = 7,200 − 6,000 = 1,200
+Over-build                = larger of the two            = 1,200   (≥ 100 → R05)
 ```
+
+If MIPS demand is raised to 7,200 after these runs (ML-0005 to 6,200), demand at order stays 6,000, so implied inventory stays 0. Still needed after run 1 becomes 2,000, the recovery run's 2,000 was exactly right, and the net requirement is 0: R05 clears and R09 (MIPS 7,200 against WMS 6,000) appears.
 
 **R05:** 1,200 units, High (≥ 1,000). 1,200 × $4.69 = **$5,628**. Priority (5,628 + 50) × 3 = 17,034. The recovery run ordered 2,000 when only 800 were missing.
 
@@ -527,9 +531,10 @@ Active runs = 2
 Implied inventory         = 900 − first run's order 900   = 0
 Consolidated requirement  = 900
 Wrapped                   = 800 + 900                     = 1,700
-Over-build                = 1,700 − 900                   = 800   (≥ 100)  → R05
-Re-ordered                = (900 + 900) − 900             = 900
 Still needed after run 1  = 900 − 800                     = 100
+Recovery ordered beyond   = 900 − 100                     = 800
+Wrapped beyond            = 1,700 − 900                   = 800
+Over-build                = larger of the two             = 800   (≥ 100)  → R05
 Net requirement           = 900 − 0 − 1,700               = −800  → R07 clears (< 20)
 ```
 

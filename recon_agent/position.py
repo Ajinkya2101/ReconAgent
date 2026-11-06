@@ -9,6 +9,13 @@ Demand comes from every MIPS schedule line for the SKU (sales orders *and*
 supply-planning lines, including lines moved to another sales day), so
 inventory is consolidated at SKU level instead of being applied to the first
 matching line only.
+
+Inventory is inferred, not read: it is the demand MIPS sized the first production
+run against, less what that run ordered. On the event feed that is the demand when
+the run was last ordered (SourceData.demand_at_order), so demand added or removed
+afterwards moves the net requirement one for one and never shows up as inventory.
+Returns are units WMS booked back to the plant, on the ticket or as a return
+transaction (the larger of the two per ticket, so a return booked in both counts once).
 """
 from __future__ import annotations
 
@@ -28,6 +35,7 @@ class SkuPosition:
     runs: list[FgRun] = field(default_factory=list)
     wms: WmsItem | None = None
     returns: float = 0.0   # units WMS returned to the plant (event feed only): wrapped but not usable
+    demand_basis: float | None = None   # event feed: demand when the first run was last ordered
 
     # --- MIPS demand -----------------------------------------------------
     @property
@@ -41,6 +49,16 @@ class SkuPosition:
     @property
     def demand_current(self) -> float:
         return self.demand_total - self.demand_moved
+
+    @property
+    def demand_at_order(self) -> float:
+        """The demand MIPS sized the first production run against (today's demand without history)."""
+        return self.demand_total if self.demand_basis is None else self.demand_basis
+
+    @property
+    def demand_after_order(self) -> float:
+        """Demand added (+) or removed (-) after the first run was ordered: new demand, not inventory."""
+        return self.demand_total - self.demand_at_order
 
     @property
     def demand_sales_orders(self) -> float:
@@ -76,13 +94,17 @@ class SkuPosition:
         """Inventory MIPS netted out of demand before sending it to production.
 
         Only the part of demand not sent to the *first* active run counts;
-        later recovery runs re-order the shortfall and must not reduce it.
+        later recovery runs re-order the shortfall and must not reduce it. The
+        demand is the one that run was ordered against: a later change is new demand.
         """
         if not self.active_runs:
             return 0.0
-        first_run_order = self.active_runs[0].net_units_ordered
-        return max(0.0, self.demand_total - first_run_order) if len(self.active_runs) > 1 \
-            else max(0.0, self.demand_total - self.net_ordered)
+        return max(0.0, self.demand_at_order - self.active_runs[0].net_units_ordered)
+
+    @property
+    def usable_supply(self) -> float:
+        """Inventory applied plus what was wrapped, less what went back to the plant."""
+        return self.implied_inventory + self.wrapped - self.returns
 
     # --- WMS fulfilment --------------------------------------------------
     @property
@@ -102,7 +124,7 @@ class SkuPosition:
     @property
     def net_requirement(self) -> float:
         """Positive = still to produce, negative = surplus to carry forward."""
-        return self.demand_total - self.implied_inventory - self.wrapped + self.returns
+        return self.demand_total - self.usable_supply
 
     @property
     def first_line_only_requirement(self) -> float:
@@ -128,6 +150,7 @@ class SkuPosition:
             "Demand Total": self.demand_total,
             "Demand Sales Date": self.demand_current,
             "Demand Moved": self.demand_moved,
+            "Demand After Order": self.demand_after_order,
             "Sales Orders (BUSS)": self.demand_sales_orders,
             "Supply Plan (OCloud)": self.demand_supply_plan,
             "Inventory Applied (implied)": self.implied_inventory,
@@ -182,10 +205,18 @@ def build_positions(src: SourceData) -> dict[str, SkuPosition]:
     for r in sorted(src.fg_runs, key=lambda r: (r.start is None, r.start)):
         runs_by_sku[r.sku].append(r)
 
-    returns: dict[str, float] = defaultdict(float)
+    # Returns per (SKU, ticket): booked by return transactions or on the ticket itself. Where both
+    # carry it (the ticket was corrected), take the larger so the same units count once.
+    returned: dict[tuple[str, str], float] = defaultdict(float)
     for t in src.wms_txns:
         if t.txn_type == "RETURN_TO_PLANT":
-            returns[t.sku] += t.qty
+            returned[(t.sku, t.ticket)] += t.qty
+    for tk in src.tickets:
+        if tk.returned_qty > 0:
+            returned[(tk.sku, tk.ticket)] = max(returned.get((tk.sku, tk.ticket), 0.0), tk.returned_qty)
+    returns: dict[str, float] = defaultdict(float)
+    for (sku, _), qty in returned.items():
+        returns[sku] += qty
 
     positions: dict[str, SkuPosition] = {}
     for sku in set(lines_by_sku) | set(runs_by_sku) | set(src.wms_items):
@@ -196,5 +227,6 @@ def build_positions(src: SourceData) -> dict[str, SkuPosition]:
             or (lines[0].description if lines else "")
         price = next((l.retail_price for l in lines if l.retail_price), config.DEFAULT_UNIT_PRICE)
         positions[sku] = SkuPosition(sku=sku, description=desc, unit_price=price,
-                                     lines=lines, runs=runs, wms=wms, returns=returns.get(sku, 0.0))
+                                     lines=lines, runs=runs, wms=wms, returns=returns.get(sku, 0.0),
+                                     demand_basis=src.demand_at_order.get(sku))
     return positions

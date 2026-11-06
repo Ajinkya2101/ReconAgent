@@ -137,7 +137,7 @@ NOTE: The second target is for the real-time version. The current version reads 
 | Run | One production run on one line and one shift, for example `SU290080A`. |
 | Wrapped units | The units that the line packed. This is the completed production. |
 | Demand | The total quantity on all MIPS lines for a SKU. |
-| Inventory applied | The inventory that MIPS subtracted from demand before it sent the order to production. |
+| Inventory applied | The inventory that MIPS subtracted from demand before it sent the order to production: the demand at that time, less what the first run ordered. A demand change after the order is new demand, not inventory. |
 | Reconciled position | The correct quantity for a SKU after the agent compares all three systems. |
 | Net requirement | The quantity that the plant must still make. A negative value is a surplus. |
 | Carry forward | To move surplus units to the next sales day as inventory. |
@@ -183,6 +183,8 @@ Net requirement = Total demand (all MIPS lines)
 
 - A positive net requirement is the quantity that the plant must still make.
 - A negative net requirement is a surplus. You must carry it forward to the next sales day.
+
+MIPS does not record the inventory that it applies, so the agent calculates it: the demand when production was ordered, less what the first run ordered. On the event feed, the agent knows when each quantity changed. Demand that changes after the first run was ordered moves the net requirement by the same quantity, and the inventory stays the same. The detail shows the change, for example "+1,200 since production was ordered". If MIPS sends the first run again, the agent uses the demand at that time.
 
 NOTE: The current extracts do not contain returns data. Thus, "Returns and adjustments" shows `—` on the screen.
 
@@ -354,7 +356,7 @@ Result: The detail area shows the row.
    - Minus completed production.
    - Plus returns and adjustments.
    - Equals the quantity to make, or the surplus to carry forward.
-3. Read the bar. It shows inventory (grey), wrapped units, and the demand mark on one scale. A surplus shows after the demand mark. A shortage shows before it.
+3. Read the bar. It shows inventory (grey), wrapped units, and the demand mark on one scale. A surplus shows after the demand mark. A shortage shows before it. The bar shows the same values as the equation: returned units are not usable, so they are not in the wrapped segment.
 4. Read the systems table. It shows the MIPS, ODI and WMS quantities on the same scale.
 5. Read each flag in the **Flags** area. Each flag shows:
    - The severity, the rule code and the title.

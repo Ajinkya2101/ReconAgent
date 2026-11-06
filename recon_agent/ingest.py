@@ -192,6 +192,9 @@ class SourceData:
     tickets: list[WmsTicket] = field(default_factory=list)
     wms_txns: list[WmsTxn] = field(default_factory=list)
     oracle_txns: list[OracleTxn] = field(default_factory=list)
+    # Event feed only: each SKU's MIPS demand when its first production run was last ordered.
+    # Demand changed after that is new demand, not inventory MIPS netted (see SkuPosition).
+    demand_at_order: dict[str, float] = field(default_factory=dict)
 
 
 def _find(pattern: str, data_dir: Path) -> Path:

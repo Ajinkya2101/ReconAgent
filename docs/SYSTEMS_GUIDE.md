@@ -150,7 +150,9 @@ Above the flags, the **reconciled position** is the bakery's core equation for t
 = Still to produce   (or, if negative, Surplus to carry forward)
 ```
 
-The bar and the systems table under it show MIPS, ODI and WMS quantities on one scale, so a mismatch is visible at a glance.
+The bar and the systems table under it show MIPS, ODI and WMS quantities on one scale, so a mismatch is visible at a glance. The bar draws the same equation, so returned units are left out of usable supply.
+
+*Inventory applied* is worked out, not read: MIPS does not record it. It is the demand when the first production run was ordered, less what that run ordered. If demand changes afterwards (a new order, a line raised or cut in MIPS), that change is new demand: it moves "still to produce" or "surplus" by the same amount, and the demand line says so ("+1,200 since production was ordered"). If MIPS re-sends the first run, the agent takes the demand at that moment. A return counts once, whether WMS booked it as a return transaction, on the ticket, or both.
 
 ### 4.3 What you do with a flag
 

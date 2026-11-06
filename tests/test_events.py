@@ -173,7 +173,7 @@ class ProjectorTest(unittest.TestCase):
         results = []
         for batch in (changes, shuffled):
             log = fresh_log()
-            log.publish_many(batch, "test", NOW)
+            log.publish_many(batch, "seed", NOW)   # an opening load: its commit order carries no history
             p = Projector(log)
             p.catch_up()
             res = engine.run(src=p.source_data(), use_ai=False)
