@@ -1,24 +1,23 @@
-"""Event contract v2: what a source-system change looks like on the event log.
+"""Event contract v3: what a source-system change looks like on the event log.
 
 Each event is one row-level change (insert, update or delete) in one source
 entity, shaped like a GoldenGate CDC record: an operation, the row key, and full
-before/after row images. Row images use the client's own extract column names
-(MIPS Order Data, ODI Finished Good / Batch Data, WMS Fill Rate and Order
-Summary by Item), so ingest.py maps event rows and Excel rows with the same code.
+before/after row images. Row images use the business team's own column names
+from the 9 Nov mapping workbook (BIMBO_MIPS_WMS_ODI_Data, one sheet per entity;
+see docs/DATA_MODEL_9NOV.md), with whitespace normalised, so ingest.py maps event
+rows and workbook rows with the same code.
 
-Where an extract has no row identifier, the contract adds one synthetic key
-column (marked below). Those are assumptions to confirm with Bimbo IT; see
-docs/EVENT_CONTRACT.md. v2 adds the real-time detail no extract carries: WMS
-receipt tickets and transactions, and Oracle Fusion inventory postings (a fourth
-source, ORACLE), which R18 and R19 need.
+Where a sheet has no row identifier, the contract adds one synthetic key column
+(marked below). Those are assumptions to confirm with Bimbo IT; see
+docs/EVENT_CONTRACT.md.
 """
 from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
 
-VERSION = 2
-SOURCES = ("MIPS", "ODI", "WMS", "ORACLE")
+VERSION = 3
+SOURCES = ("BUSS", "ORACLE", "MIPS", "ODI", "WMS")
 OPS = ("I", "U", "D")   # GoldenGate op_type: insert, update, delete
 
 # Column types. "number" accepts int or float.
@@ -30,124 +29,85 @@ class Entity:
     name: str
     source: str
     key: str                       # column holding the row key
-    columns: dict[str, str]        # column -> type, in the client's extract order
+    columns: dict[str, str]        # column -> type, in the workbook's column order
     required: tuple[str, ...]      # columns that must be non-empty
-    synthetic_key: bool = False    # the key column is not in the client extract
+    synthetic_key: bool = False    # the key column is not in the workbook
     description: str = ""
     summary: tuple[str, ...] = ()  # columns that identify a row at a glance (lists, CLI, simulator)
     label: str = ""                # short name for screens
+    sheet: str = ""                # the workbook sheet the entity is read from
 
 
 ENTITIES: dict[str, Entity] = {e.name: e for e in (
     Entity(
-        "mips.order_line", "MIPS", "Order Line ID", synthetic_key=True, label="Order lines",
-        summary=("FG Oracle Ref", "FG Description", "Offset Sales Date", "Order Moved", "Source System",
-                 "Order Quantity"),
-        description="MIPS schedule line: a BUSS sales order or an OCloud supply-plan line (MIPS Order Data)",
+        "buss.sales_order", "BUSS", "SO Line ID", synthetic_key=True, label="Sales orders",
+        sheet="Sales Orders",
+        summary=("Order Number", "Customer Name", "Item Number", "Order Quantity", "Requested Ship Date"),
+        description="Customer order line received from BUSS (Sales Orders)",
         columns={
-            "Order Line ID": STR, "Plant Code": STR, "Plant Name": STR, "Schedule Date": DATE,
-            "Offset Sales Date": DATE, "BUSS Sales Date": DATE, "Order Moved": BOOL,
-            "Product Sales Date": DATE, "Requested Ship Date": DATE, "Production Date": DATE,
-            "FG Oracle Ref": STR, "FG BUSS Code": STR, "FG Description": STR, "Order Quantity": NUM,
-            "Container Code": STR, "Units per Container": NUM, "Units Per Carton": NUM,
-            "Containers per Rack": NUM, "Retail Price": NUM, "Closed": STR, "Source System": STR,
-            "Last Modify Date Time": DATETIME, "Scheduling Errors": STR,
+            "SO Line ID": STR, "Order Number": STR, "Order Line": NUM, "Order Type": STR, "Order Date": DATE,
+            "Customer Name": STR, "Ship-To Location (USA)": STR, "FG BUSS Code": STR, "Item Number": STR,
+            "Item Description": STR, "UOM": STR, "Order Quantity": NUM, "Requested Ship Date": DATE,
+            "Sales Date": DATE, "Price": NUM,
         },
-        required=("Order Line ID", "FG Oracle Ref", "Schedule Date", "Offset Sales Date", "Order Quantity",
-                  "Source System")),
+        required=("SO Line ID", "Order Number", "Item Number", "Order Quantity")),
     Entity(
-        "odi.finished_good", "ODI", "FGEntryID", synthetic_key=True, label="Finished goods",
-        summary=("OracleFGNumber", "OracleTypeCode", "LineCode", "ShiftName", "NetUnitsOrdered",
-                 "ActualWrappedUnits", "MIPSBeginningInventoryQty"),
-        description="ODI / Oracle production result for one SKU in one run (ODI Finished Good Data)",
+        "oracle.forecast", "ORACLE", "Forecast ID", label="Forecast", sheet="Oracle Planning & Forecast",
+        summary=("Forecast Date", "Item Number", "Item Description", "Plant", "Forecast / Required Quantity"),
+        description="Expected demand planned in Oracle (Oracle Planning & Forecast)",
         columns={
-            "FGEntryID": STR, "PlantName": STR, "SalesDate": DATE, "ProductionStartDateTime": DATETIME,
-            "ProductionEndDateTime": DATETIME, "LineCode": STR, "ShiftName": STR, "OracleTypeCode": STR,
-            "LegacyFGNumber": STR, "OracleFGNumber": STR, "OCloudFGItemStructure": STR,
-            "OracleFGDescription": STR, "NetUnitsOrdered": NUM, "ActualWrappedUnits": NUM,
-            "ExpectedEndingInventoryQty": NUM, "MIPSBeginningInventoryQty": NUM,
-            "MIPSInventoryAdjustmentQty": NUM, "MIPSOrderQty": NUM, "MIPSOrderAdjustmentQty": NUM,
-            "ActualDamagedWeightWithWrap": NUM, "ActualDamagedUnitsWithWrap": NUM,
-            "ActualDamagedWeightWithoutWrap": NUM, "ActualDamagedUnitsWithoutWrap": NUM,
-            "TotalActualDamagedUnits": NUM, "TheoreticalRunTime": NUM, "TotalPieces": NUM,
-            "OraclePiecesPerPkg": NUM,
+            "Forecast ID": STR, "Forecast Date": DATE, "Item Number": STR, "Item Description": STR, "UOM": STR,
+            "Item Type": STR, "Plant": STR, "Forecast / Required Quantity": NUM,
         },
-        required=("FGEntryID", "SalesDate", "LineCode", "OracleTypeCode", "OracleFGNumber")),
+        required=("Forecast ID", "Item Number", "Forecast / Required Quantity")),
     Entity(
-        "odi.batch", "ODI", "BatchEntryID", synthetic_key=True, label="Batches",
-        summary=("Oracle Type", "MIPS Description", "Prod Line", "Shift", "MIPS Sched Batches", "Act Batches Mixed"),
-        description="ODI batch (mixing) record for one formula run (ODI Batch Data)",
-        columns={
-            "BatchEntryID": STR, "PlantName": STR, "SalesDate": DATE, "WrappingStartDateTime": DATETIME,
-            "WrappingEndDateTime": DATETIME, "Prod Line": STR, "Shift": STR, "Oracle Type": STR,
-            "Oracle Formula": STR, "MIPS Description": STR, "MIPS Sched Batches": NUM,
-            "Scrap Dough Weight": NUM, "Act Batches Mixed": NUM, "Total Raw Ingr Adjust Weight": NUM,
-            "Total Other Batch Weight": NUM, "Total Baked Ingr Weight": NUM, "Total Remix Batch Weight": NUM,
-            "Tot Batch Pieces Counted Qty": NUM, "Actual Damaged Weight w/o Wrap Weight": NUM,
-            "Theo Batch Pieces Qty": NUM, "Batch Piece Var Qty": NUM, "Batch Piece Var %": NUM,
-            "FG & FG Scrap Pieces Qty": NUM, "Final Piece Variance Qty": NUM, "Final Piece Variance %": NUM,
-        },
-        required=("BatchEntryID", "SalesDate", "Prod Line", "Oracle Type")),
+        "oracle.item", "ORACLE", "Item Number", label="Item master", sheet="ITEM Master",
+        summary=("Item Number", "Item Description", "UOM", "Item Type"),
+        description="Product catalogue: finished goods (FG) and raw materials (RM) (ITEM Master)",
+        columns={"Item Number": STR, "Item Description": STR, "UOM": STR, "Item Type": STR},
+        required=("Item Number",)),
     Entity(
-        "wms.order", "WMS", "Order Nbr", label="Orders",
-        summary=("Ship to Name", "Order Type", "Order Qty", "Allocated Qty", "Loaded Qty", "Shipped Qty"),
-        description="WMS customer order header with fill and shipping progress (WMS Fill Rate Report)",
+        "mips.work_order", "MIPS", "Work Order Number", label="Work orders", sheet="MIPS",
+        summary=("FG Oracle Ref", "FG Description", "Forecast / Order Quantity", "Work Order Quantity",
+                 "Prod Line", "Work Order Status"),
+        description="Production work order planned in MIPS for the demand left after allocated stock (MIPS)",
         columns={
-            "Facility": STR, "Order Nbr": STR, "Ship to Name": STR, "Progress": STR, "Route Nbr": STR,
-            "Order Type": STR, "Sales Date": DATE, "Order Qty": NUM, "Allocated Qty": NUM, "Packed Qty": NUM,
-            "Loaded Qty": NUM, "Shipped Qty": NUM, "Short Qty": NUM, "% Allocated": NUM, "% Loaded": NUM,
-            "% Shipped": NUM,
+            "Production Date": DATE, "Work Order Number": STR, "FG Oracle Ref": STR, "FG BUSS Code": STR,
+            "FG Description": STR, "Forecast / Order Quantity": NUM, "Prod Line": STR, "Shift": STR,
+            "Scheduling Errors": STR, "Work Order Quantity": NUM, "Work order start date": DATE,
+            "Work Order Completion Date": DATE, "Work Order Status": STR,
         },
-        required=("Order Nbr", "Order Type", "Order Qty")),
+        required=("Work Order Number", "FG Oracle Ref", "Work Order Quantity")),
     Entity(
-        "wms.item_order", "WMS", "Item Line ID", synthetic_key=True, label="Item lines",
-        summary=("Item Nbr", "Description", "Cust Name", "Units per Container", "Order Qty", "Allocated Units Qty"),
-        description="WMS order quantity and allocation for one item and customer "
-                    "(WMS Order Summary Report by Item, one row per customer line)",
+        "odi.batch_mapping", "ODI", "ODI Entry ID", synthetic_key=True, label="Batch mapping",
+        sheet="ODI Batch Data Entry Mapping",
+        summary=("Source System", "Sales Order Number / Forcast", "Quantity", "Allocated quantity for SO",
+                 "Work Order Number", "Work Order Quantity"),
+        description="ODI's join of one demand line (BUSS order or Oracle forecast) to its work order and "
+                    "MIPS batches (ODI Batch Data Entry Mapping)",
         columns={
-            "Item Line ID": STR, "Sales Date": DATE, "Item Nbr": STR, "Units per Container": NUM,
-            "Description": STR, "Cust Name": STR, "Original Ord Qty": NUM, "Order Qty": NUM,
-            "Order Stack Qty": NUM, "Order Tray Qty": NUM, "Order Units Qty": NUM, "Allocated Stacks": NUM,
-            "Allocated Trays": NUM, "Allocated Units Qty": NUM, "Stacks Remaining": NUM,
-            "Trays Remaining": NUM, "Completion%": STR,
+            "ODI Entry ID": STR, "Plant Code": STR, "Schedule Date": DATE, "Source System": STR,
+            "BUSS Sales / Forcast Date": DATE, "Product Sales Date": DATE, "Requested Ship Date": DATE,
+            "Sales Order / Forcast Date": DATE, "Sales Order Number / Forcast": STR, "SO Line number": NUM,
+            "Quantity": NUM, "Allocated quantity for SO": NUM, "Work Order Number": STR, "Work Order Date": DATE,
+            "Work Order Quantity": NUM, "Item Number": STR, "Wrapping Start Date Time": DATETIME,
+            "Wrapping End Date Time": DATETIME, "Plant Name": STR, "Prod Line": STR, "Shift": STR,
+            "Oracle Type": STR, "Oracle Formula": STR, "MIPS Description": STR, "MIPS Sched Batches": NUM,
+            "Act Batches Mixed": NUM, "Batch Status": STR,
         },
-        required=("Item Line ID", "Item Nbr", "Cust Name", "Order Qty")),
-    # --- v2: real-time detail the daily extracts do not carry (R18, R19, returns term) ----
+        required=("ODI Entry ID", "Source System", "Sales Order Number / Forcast", "Quantity")),
     Entity(
-        "wms.ticket", "WMS", "Ticket Nbr", label="Tickets",
-        summary=("Item Nbr", "Run Code", "Location", "Received Qty", "Returned Qty", "Net Received Qty"),
-        description="WMS receipt ticket: finished goods received from a plant run into the warehouse or freezer",
+        "wms.inventory", "WMS", "Inventory ID", synthetic_key=True, label="Inventory", sheet="WMS",
+        summary=("Item Number", "Item Description", "On hand", "Available quantity", "Allocated quantity",
+                 "Locator"),
+        description="Warehouse stock for one item and locator; all on-hand stock is kept in WMS only (WMS)",
         columns={
-            "Ticket Nbr": STR, "Sales Date": DATE, "Item Nbr": STR, "Description": STR, "Lot Nbr": STR,
-            "Run Code": STR, "Location": STR, "Received Date Time": DATETIME, "Received Qty": NUM,
-            "Returned Qty": NUM, "Net Received Qty": NUM, "Status": STR,
+            "Inventory ID": STR, "Item Number": STR, "Item Description": STR, "On hand": NUM,
+            "Available quantity": NUM, "Allocated quantity": NUM, "UOM": STR, "Item Type": STR, "Facility": STR,
+            "Company / Inventory Organization": STR, "Locator": STR,
         },
-        required=("Ticket Nbr", "Item Nbr", "Received Qty")),
-    Entity(
-        "wms.transaction", "WMS", "Txn Nbr", label="Transactions",
-        summary=("Txn Type", "Item Nbr", "Qty", "Ticket Nbr", "Order Nbr", "Txn Date Time"),
-        description="WMS inventory transaction (receipt, ship, return to plant, freezer move) that Oracle must post",
-        columns={
-            "Txn Nbr": STR, "Txn Type": STR, "Txn Date Time": DATETIME, "Item Nbr": STR, "Qty": NUM,
-            "Ticket Nbr": STR, "Order Nbr": STR, "Lot Nbr": STR, "Reason Code": STR, "User": STR,
-        },
-        required=("Txn Nbr", "Txn Type", "Txn Date Time", "Item Nbr", "Qty")),
-    Entity(
-        "oracle.inventory_txn", "ORACLE", "TransactionId", label="Inventory postings",
-        summary=("SourceReference", "TransactionTypeName", "ItemNumber", "TransactionQuantity", "ProcessStatus",
-                 "PostedDate"),
-        description="Oracle Fusion inventory transaction posted from a WMS transaction (SourceReference = Txn Nbr)",
-        columns={
-            "TransactionId": STR, "SourceReference": STR, "TransactionTypeName": STR, "ItemNumber": STR,
-            "TransactionQuantity": NUM, "TransactionUnitOfMeasure": STR, "Subinventory": STR, "LotNumber": STR,
-            "TransactionDate": DATETIME, "PostedDate": DATETIME, "ProcessStatus": STR, "ErrorMessage": STR,
-        },
-        required=("TransactionId", "SourceReference", "ItemNumber", "TransactionQuantity", "ProcessStatus")),
+        required=("Inventory ID", "Item Number", "On hand")),
 )}
-
-# WMS transaction types, and the ones that change what the plant can count as usable supply.
-TXN_TYPES = ("RECEIPT", "SHIP", "RETURN_TO_PLANT", "FREEZER_IN", "FREEZER_OUT", "ADJUST")
-POSTING_STATUSES = ("POSTED", "PENDING", "ERROR")
 
 
 class ContractError(ValueError):

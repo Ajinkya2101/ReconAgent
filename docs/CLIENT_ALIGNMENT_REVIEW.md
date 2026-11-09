@@ -1,5 +1,7 @@
 # Client Alignment Review — Reconciliation Agent
 
+> **Superseded.** This review covers the v2 data model (the five client extracts). The agent now uses the business team's 9 Nov mapping: see [DATA_MODEL_9NOV.md](DATA_MODEL_9NOV.md).
+
 **Baseline.** Only what the client gave us:
 
 | Ref | Source | What it defines |

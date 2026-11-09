@@ -2,7 +2,7 @@
 
     python -m recon_agent run [--data-dir DIR] [--offline]
     python -m recon_agent ask "Why is MIPS asking for more 150080?"
-    python -m recon_agent feedback R05-8526 accept --note "Applied to Monday"
+    python -m recon_agent feedback R05-950513 accept --note "Work order cut in MIPS"
     python -m recon_agent feedback --from-workbook output/recon_2026-09-12.xlsx
     python -m recon_agent serve [--host 0.0.0.0] [--port 8000]
     python -m recon_agent events seed | status | tail | show | set | insert | delete | clock | reset
@@ -11,7 +11,7 @@
     python -m recon_agent --version
 
 RECON_SOURCE=events makes run, ask, feedback and serve read the simulated event
-log instead of the Excel extracts (see docs/EVENT_CONTRACT.md).
+log instead of the source workbook (see docs/EVENT_CONTRACT.md).
 """
 from __future__ import annotations
 
@@ -35,8 +35,9 @@ def cmd_run(args) -> None:
     k = res.kpis
     print(f"Sales date {k['sales_date']}: {k['skus_reconciled']} SKUs, {k['findings']} exceptions "
           f"({k['by_severity']}), ${k['dollar_exposure']:,} exposure")
-    print(f"  over-production risk {k['overproduction_risk_units']:,.0f} units · carry-forward "
-          f"{k['carryover_units']:,.0f} · untracked supply {k['untracked_supply_units']:,.0f}")
+    print(f"  demand {k['total_demand_units']:,.0f} · shortfall {k['total_shortfall_units']:,.0f} · work orders "
+          f"{k['total_work_order_units']:,.0f} · over-production {k['overproduction_units']:,.0f} · "
+          f"under-production {k['underproduction_units']:,.0f} units")
     print(f"  narratives: {res.narration['source']}")
     print(f"\nShift briefing:\n{res.narration['shift_briefing']}\n")
     for f in res.findings[:10]:
@@ -106,7 +107,7 @@ def main(argv=None) -> None:
     ap.add_argument("--data-dir", default=str(config.DATA_DIR))
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("run", help="Reconcile the extracts and write the workbook/dashboard")
+    p = sub.add_parser("run", help="Reconcile the source workbook and write the planner workbook/dashboard")
     p.add_argument("--out-dir", default=str(config.REPORT_DIR))
     p.add_argument("--offline", action="store_true", help="Skip OCI Generative AI; use rule-generated narratives")
     p.set_defaults(func=cmd_run)

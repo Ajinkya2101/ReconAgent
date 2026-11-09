@@ -1,15 +1,19 @@
-"""Source adapters: read each system's extract into canonical records.
+"""Source adapters: read each system's rows into canonical records.
 
-Every adapter normalises the join keys (Oracle FG number, dates, line codes) so
-the reconciliation engine never sees source-specific quirks such as the
-trailing whitespace BUSS appends to FG Oracle Ref, or the block layout of the
-WMS Order Summary report. In production these adapters would be swapped for
+The data model is the business team's 9 Nov mapping (docs/DATA_MODEL_9NOV.md): one
+workbook, one sheet per source - Oracle item master and forecast, BUSS sales orders,
+the ODI batch data entry mapping, WMS stock and MIPS work orders. Every mapper
+normalises the join keys (item numbers, order numbers, dates), so the engine never
+sees source quirks such as an order number read as a float. The workbook reader and
+the event feed (recon_agent/events) hand the mappers rows with the same column names,
+so both produce identical records. In production the readers would be swapped for
 API/middleware readers without changing anything downstream.
 """
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import openpyxl
@@ -18,13 +22,22 @@ from . import config
 
 
 def norm_sku(value) -> str:
-    """Canonical Oracle FG number: stripped string, no leading zeros, no '.0'."""
+    """Canonical Oracle item number: stripped string, no leading zeros, no '.0'."""
     if value is None:
         return ""
     s = str(value).strip()
     if s.endswith(".0"):
         s = s[:-2]
-    return s.lstrip("0") or "0"
+    return s.lstrip("0") or ("0" if s else "")
+
+
+def norm_ref(value) -> str:
+    """An order number, forecast ID or work-order number as text ('' when empty)."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return str(value).strip()
 
 
 def as_date(value) -> dt.date | None:
@@ -36,34 +49,77 @@ def as_date(value) -> dt.date | None:
 
 
 def num(value) -> float:
-    return float(value) if isinstance(value, (int, float)) else 0.0
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
 
 
-CLOSED_VALUES = ("T", "TRUE", "Y", "YES", "1")
-
-
-def is_closed(value) -> bool:
-    """MIPS `Closed` flag. 'F' (open) on every line of the client extract; a closed line is not valid demand."""
-    return value is True or str(value or "").strip().upper() in CLOSED_VALUES
+def text(value) -> str:
+    return "" if value is None else str(value).strip()
 
 
 @dataclass
-class MipsLine:
+class Item:
     sku: str
-    raw_sku: str
-    buss_code: str
     description: str
-    schedule_date: dt.date
-    offset_sales_date: dt.date
-    production_date: dt.date | None
-    order_moved: bool
-    order_qty: float
-    container_code: str
-    units_per_container: float
-    retail_price: float
+    uom: str
+    item_type: str   # FG finished good, RM raw material
+
+
+@dataclass
+class SalesOrder:
+    line_id: str
+    order_nbr: str
+    line: int
+    order_type: str
+    order_date: dt.date | None
+    customer: str
+    ship_to: str
+    buss_code: str
+    sku: str
+    description: str
+    uom: str
+    qty: float
+    requested_ship: dt.date | None
+    sales_date: dt.date | None
+    price: float
+
+    @property
+    def ref(self) -> tuple[str, int]:
+        return self.order_nbr, self.line
+
+
+@dataclass
+class Forecast:
+    forecast_id: str
+    date: dt.date | None
+    sku: str
+    description: str
+    plant: str
+    qty: float
+
+
+@dataclass
+class OdiEntry:
+    entry_id: str
+    plant: str
     source_system: str
-    last_modified: dt.datetime | None
-    closed: bool = False   # MIPS `Closed`: the line no longer counts as demand
+    ref: str                      # Sales Order Number / Forcast: an order number or a forecast ID
+    ref_line: int                 # SO Line number (0 for a forecast)
+    requested_ship: dt.date | None
+    qty: float
+    allocated: float
+    wo: str
+    wo_qty: float
+    item: str                     # Item Number as ODI carries it ('' on lines served from stock)
+    wrap_start: dt.datetime | None
+    wrap_end: dt.datetime | None
+    line: str
+    shift: str
+    oracle_type: str
+    mips_description: str
+    sched_batches: float
+    act_batches: float
+    batch_status: str
+    sku: str = ""                 # resolved by the engine: the item of the demand line it maps
 
     @property
     def is_sales_order(self) -> bool:
@@ -71,363 +127,184 @@ class MipsLine:
 
 
 @dataclass
-class FgRun:
+class WmsStock:
+    inventory_id: str
+    sku: str
+    description: str
+    on_hand: float
+    available: float
+    allocated: float
+    item_type: str
+    facility: str
+    locator: str
+
+
+@dataclass
+class WorkOrder:
+    wo: str
+    production_date: dt.date | None
     sku: str
     buss_code: str
     description: str
-    sales_date: dt.date
-    start: dt.datetime | None
-    end: dt.datetime | None
+    demand_qty: float             # Forecast / Order Quantity: the demand left that MIPS plans
     line: str
-    shift: str | None
-    formula_type: str
-    item_structure: str
-    net_units_ordered: float
-    wrapped_units: float
-    expected_ending_inventory: float
-    mips_beginning_inventory: float
-    mips_inventory_adjustment: float
-    mips_order_qty: float
-    mips_order_adjustment: float
-    damaged_units: float
-    pieces_per_pkg: float
-
-
-@dataclass
-class BatchRun:
-    sales_date: dt.date
-    wrap_start: dt.datetime | None
-    line: str
-    shift: str | None
-    formula_type: str
-    description: str
-    sched_batches: float
-    actual_batches: float
-    theo_pieces: float
-    final_piece_variance: float
-    final_piece_variance_pct: float
-
-
-@dataclass
-class WmsCustomerOrder:
-    customer: str
-    original_qty: float
-    order_qty: float
-    allocated_units: float
-    stacks_remaining: float
-    trays_remaining: float
+    shift: str
+    errors: str
+    wo_qty: float
+    start: dt.date | None
+    completion: dt.date | None
     status: str
-
-
-@dataclass
-class WmsItem:
-    sku: str
-    description: str
-    units_per_container: float
-    orders: list[WmsCustomerOrder] = field(default_factory=list)
-    report_total_order_qty: float = 0.0
-    report_total_allocated: float = 0.0
-
-    @property
-    def order_qty(self) -> float:
-        return sum(o.order_qty for o in self.orders)
-
-    @property
-    def allocated(self) -> float:
-        return sum(o.allocated_units for o in self.orders)
-
-    @property
-    def original_order_qty(self) -> float:
-        """What the customers first ordered ('Original Ord Qty'); differs from order_qty when an order changed."""
-        return sum(o.original_qty for o in self.orders)
-
-    @property
-    def changed_orders(self) -> list[WmsCustomerOrder]:
-        return [o for o in self.orders if o.original_qty and o.original_qty != o.order_qty]
-
-
-@dataclass
-class WmsFillOrder:
-    order_nbr: str
-    ship_to: str
-    order_type: str
-    sales_date: dt.date | None
-    order_qty: float
-    allocated_qty: float
-    packed_qty: float
-    loaded_qty: float
-    shipped_qty: float
-    short_qty: float
-
-
-@dataclass
-class WmsTicket:
-    ticket: str
-    sku: str
-    run_code: str
-    location: str
-    received_at: dt.datetime | None
-    received_qty: float
-    returned_qty: float
-    net_received_qty: float
-
-
-@dataclass
-class WmsTxn:
-    txn: str
-    txn_type: str
-    at: dt.datetime | None
-    sku: str
-    qty: float
-    ticket: str
-    order: str
-    reason: str
-
-
-@dataclass
-class OracleTxn:
-    txn_id: str
-    source_ref: str
-    txn_type: str
-    sku: str
-    qty: float
-    posted_at: dt.datetime | None
-    status: str
-    error: str
 
 
 @dataclass
 class SourceData:
-    mips: list[MipsLine]
-    fg_runs: list[FgRun]
-    batches: list[BatchRun]
-    wms_items: dict[str, WmsItem]
-    fill_orders: list[WmsFillOrder]
-    fill_report_total: float
+    items: dict[str, Item]
+    sales_orders: list[SalesOrder]
+    forecasts: list[Forecast]
+    odi: list[OdiEntry]
+    stock: list[WmsStock]
+    work_orders: list[WorkOrder]
     files: dict[str, str]
     as_of: dt.datetime | None = None   # event feed: simulated time of the projection
-    # Real-time detail only the event feed carries (empty for the daily extracts).
-    tickets: list[WmsTicket] = field(default_factory=list)
-    wms_txns: list[WmsTxn] = field(default_factory=list)
-    oracle_txns: list[OracleTxn] = field(default_factory=list)
-    # Event feed only: each SKU's MIPS demand when its first production run was last ordered.
-    # Demand changed after that is new demand, not inventory MIPS netted (see SkuPosition).
-    demand_at_order: dict[str, float] = field(default_factory=dict)
-
-
-def _find(pattern: str, data_dir: Path) -> Path:
-    matches = sorted(data_dir.glob(pattern))
-    if not matches:
-        raise FileNotFoundError(f"No source file matching '{pattern}' in {data_dir}")
-    return matches[-1]
-
-
-def _rows(path: Path) -> list[tuple]:
-    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
-    try:
-        return [tuple(r) for r in wb.active.iter_rows(values_only=True)]
-    finally:
-        wb.close()  # read-only mode keeps the file handle open until closed
-
-
-def _table(rows: list[tuple], header_marker: str) -> list[dict]:
-    """Rows below the first row whose first cell equals header_marker."""
-    idx = next(i for i, r in enumerate(rows) if r and r[0] == header_marker)
-    header = rows[idx]
-    return [dict(zip(header, r)) for r in rows[idx + 1:] if any(v is not None for v in r)]
 
 
 # --- record mappers ----------------------------------------------------------
-# Each takes rows keyed by the client's own column names, so the Excel extracts and
-# the event feed (recon_agent/events, same columns) produce identical records.
+# Each takes rows keyed by the business team's column names, so the workbook and the
+# event feed (recon_agent/events, same columns) produce identical records.
 
-def mips_lines(records: list[dict]) -> list[MipsLine]:
+def items(records: list[dict]) -> dict[str, Item]:
+    out = {}
+    for r in records:
+        sku = norm_sku(r.get("Item Number"))
+        if sku:
+            out[sku] = Item(sku, text(r.get("Item Description")), text(r.get("UOM")), text(r.get("Item Type")).upper())
+    return out
+
+
+def sales_orders(records: list[dict]) -> list[SalesOrder]:
     out = []
     for r in records:
-        if r.get("FG Oracle Ref") is None:
+        if r.get("Order Number") is None:
             continue
-        out.append(MipsLine(
-            sku=norm_sku(r["FG Oracle Ref"]),
-            raw_sku=str(r["FG Oracle Ref"]),
-            buss_code=str(r["FG BUSS Code"] or "").strip(),
-            description=str(r["FG Description"] or "").strip(),
-            schedule_date=as_date(r["Schedule Date"]),
-            offset_sales_date=as_date(r["Offset Sales Date"]),
-            production_date=as_date(r["Production Date"]),
-            order_moved=bool(r["Order Moved"]),
-            order_qty=num(r["Order Quantity"]),
-            container_code=str(r["Container Code"] or ""),
-            units_per_container=num(r["Units per Container"]),
-            retail_price=num(r["Retail Price"]),
-            source_system=str(r["Source System"] or "").strip(),
-            last_modified=r["Last Modify Date Time"],
-            closed=is_closed(r.get("Closed")),
-        ))
+        order, line = norm_ref(r["Order Number"]), int(num(r.get("Order Line")) or 1)
+        out.append(SalesOrder(
+            line_id=text(r.get("SO Line ID")) or f"{order}-{line}", order_nbr=order, line=line,
+            order_type=text(r.get("Order Type")), order_date=as_date(r.get("Order Date")),
+            customer=text(r.get("Customer Name")), ship_to=text(r.get("Ship-To Location (USA)")),
+            buss_code=norm_ref(r.get("FG BUSS Code")), sku=norm_sku(r.get("Item Number")),
+            description=text(r.get("Item Description")), uom=text(r.get("UOM")), qty=num(r.get("Order Quantity")),
+            requested_ship=as_date(r.get("Requested Ship Date")), sales_date=as_date(r.get("Sales Date")),
+            price=num(r.get("Price"))))
     return out
 
 
-def fg_runs(records: list[dict]) -> list[FgRun]:
+def forecasts(records: list[dict]) -> list[Forecast]:
+    return [Forecast(forecast_id=norm_ref(r["Forecast ID"]), date=as_date(r.get("Forecast Date")),
+                     sku=norm_sku(r.get("Item Number")), description=text(r.get("Item Description")),
+                     plant=text(r.get("Plant")), qty=num(r.get("Forecast / Required Quantity")))
+            for r in records if r.get("Forecast ID") is not None]
+
+
+def odi_entries(records: list[dict]) -> list[OdiEntry]:
     out = []
-    for r in records:
-        out.append(FgRun(
-            sku=norm_sku(r["OracleFGNumber"]),
-            buss_code=str(r["LegacyFGNumber"] or "").strip(),
-            description=str(r["OracleFGDescription"] or "").strip(),
-            sales_date=as_date(r["SalesDate"]),
-            start=r["ProductionStartDateTime"],
-            end=r["ProductionEndDateTime"],
-            line=str(r["LineCode"] or ""),
-            shift=r["ShiftName"],
-            formula_type=str(r["OracleTypeCode"] or "").strip(),
-            item_structure=str(r["OCloudFGItemStructure"] or ""),
-            net_units_ordered=num(r["NetUnitsOrdered"]),
-            wrapped_units=num(r["ActualWrappedUnits"]),
-            expected_ending_inventory=num(r["ExpectedEndingInventoryQty"]),
-            mips_beginning_inventory=num(r["MIPSBeginningInventoryQty"]),
-            mips_inventory_adjustment=num(r["MIPSInventoryAdjustmentQty"]),
-            mips_order_qty=num(r["MIPSOrderQty"]),
-            mips_order_adjustment=num(r["MIPSOrderAdjustmentQty"]),
-            damaged_units=num(r["TotalActualDamagedUnits"]),
-            pieces_per_pkg=num(r["OraclePiecesPerPkg"]),
-        ))
-    return out
-
-
-def batch_runs(records: list[dict]) -> list[BatchRun]:
-    out = []
-    for r in records:
-        out.append(BatchRun(
-            sales_date=as_date(r["SalesDate"]),
-            wrap_start=r["WrappingStartDateTime"],
-            line=str(r["Prod Line"] or ""),
-            shift=r["Shift"],
-            formula_type=str(r["Oracle Type"] or "").strip(),
-            description=str(r["MIPS Description"] or "").strip(),
-            sched_batches=num(r["MIPS Sched Batches"]),
-            actual_batches=num(r["Act Batches Mixed"]),
-            theo_pieces=num(r["Theo Batch Pieces Qty"]),
-            final_piece_variance=num(r["Final Piece Variance Qty"]),
-            final_piece_variance_pct=num(r["Final Piece Variance %"]),
-        ))
-    return out
-
-
-def wms_items(records: list[dict]) -> dict[str, WmsItem]:
-    """One record per item and customer line, as in the 'Order Summary Report by Item'."""
-    items: dict[str, WmsItem] = {}
-    for r in records:
-        sku = norm_sku(r["Item Nbr"])
-        item = items.get(sku)
-        if item is None:
-            item = items[sku] = WmsItem(sku=sku, description=str(r["Description"] or "").strip(),
-                                        units_per_container=num(r["Units per Container"]))
-        item.orders.append(WmsCustomerOrder(
-            customer=r["Cust Name"], original_qty=num(r["Original Ord Qty"]), order_qty=num(r["Order Qty"]),
-            allocated_units=num(r["Allocated Units Qty"]), stacks_remaining=num(r["Stacks Remaining"]),
-            trays_remaining=num(r["Trays Remaining"]), status=str(r["Completion%"] or "")))
-    return items
-
-
-def fill_orders(records: list[dict]) -> list[WmsFillOrder]:
-    orders = []
-    for r in records:
-        orders.append(WmsFillOrder(
-            order_nbr=str(r["Order Nbr"]), ship_to=str(r["Ship to Name"] or ""),
-            order_type=str(r["Order Type"] or ""), sales_date=as_date(r["Sales Date"]),
-            order_qty=num(r["Order Qty"]), allocated_qty=num(r["Allocated Qty"]),
-            packed_qty=num(r["Packed Qty"]), loaded_qty=num(r["Loaded Qty"]),
-            shipped_qty=num(r["Shipped Qty"]), short_qty=num(r["Short Qty"])))
-    return orders
-
-
-def wms_tickets(records: list[dict]) -> list[WmsTicket]:
-    return [WmsTicket(ticket=str(r["Ticket Nbr"]), sku=norm_sku(r["Item Nbr"]), run_code=str(r["Run Code"] or ""),
-                      location=str(r["Location"] or ""), received_at=r["Received Date Time"],
-                      received_qty=num(r["Received Qty"]), returned_qty=num(r["Returned Qty"]),
-                      net_received_qty=num(r["Net Received Qty"])) for r in records]
-
-
-def wms_transactions(records: list[dict]) -> list[WmsTxn]:
-    return [WmsTxn(txn=str(r["Txn Nbr"]), txn_type=str(r["Txn Type"] or "").strip().upper(), at=r["Txn Date Time"],
-                   sku=norm_sku(r["Item Nbr"]), qty=num(r["Qty"]), ticket=str(r["Ticket Nbr"] or ""),
-                   order=str(r["Order Nbr"] or ""), reason=str(r["Reason Code"] or "")) for r in records]
-
-
-def oracle_transactions(records: list[dict]) -> list[OracleTxn]:
-    return [OracleTxn(txn_id=str(r["TransactionId"]), source_ref=str(r["SourceReference"] or ""),
-                      txn_type=str(r["TransactionTypeName"] or ""), sku=norm_sku(r["ItemNumber"]),
-                      qty=num(r["TransactionQuantity"]), posted_at=r["PostedDate"],
-                      status=str(r["ProcessStatus"] or "").strip().upper(), error=str(r["ErrorMessage"] or ""))
-            for r in records]
-
-
-# --- Excel extract readers ---------------------------------------------------
-
-def load_mips(path: Path) -> list[MipsLine]:
-    return mips_lines(_table(_rows(path), "Plant Code"))
-
-
-def load_fg_runs(path: Path) -> list[FgRun]:
-    return fg_runs(_table(_rows(path), "PlantName"))
-
-
-def load_batches(path: Path) -> list[BatchRun]:
-    return batch_runs(_table(_rows(path), "PlantName"))
-
-
-WMS_ITEM_COLUMNS = ("Cust Name", "Original Ord Qty", "Order Qty", "Order Stack Qty", "Order Tray Qty",
-                    "Order Units Qty", "Allocated Stacks", "Allocated Trays", "Allocated Units Qty",
-                    "Stacks Remaining", "Trays Remaining", "Completion%")
-
-
-def load_wms_order_summary(path: Path) -> dict[str, WmsItem]:
-    """Parse the block-structured 'Order Summary Report by Item'."""
-    rows = _rows(path)
-    records: list[dict] = []
-    heads: list[dict] = []
-    subtotals: dict[str, tuple[float, float]] = {}
-    head = None
-    for i, r in enumerate(rows):
-        first = r[0] if r else None
-        if first == "Item Nbr:":
-            h = rows[i + 1]
-            head = {"Item Nbr": h[0], "Units per Container": h[1], "Description": h[2]}
-            heads.append(head)
-        elif head is None or first == "Cust Name":
+    for i, r in enumerate(records, 1):
+        if r.get("Sales Order Number / Forcast") is None:
             continue
-        elif isinstance(first, str) and isinstance(r[1], (int, float)):
-            records.append({**head, **dict(zip(WMS_ITEM_COLUMNS, r))})
-        elif first is None and isinstance(r[1], (int, float)) and records and                 records[-1]["Item Nbr"] == head["Item Nbr"]:
-            subtotals[norm_sku(head["Item Nbr"])] = (num(r[2]), num(r[8]))
-    lines = wms_items(records)
-    # Keep the report's item order, including items printed with no customer lines.
-    items = {}
-    for h in heads:
-        sku = norm_sku(h["Item Nbr"])
-        items[sku] = lines.get(sku) or WmsItem(sku=sku, description=str(h["Description"] or "").strip(),
-                                               units_per_container=num(h["Units per Container"]))
-    for sku, (order_qty, allocated) in subtotals.items():
-        items[sku].report_total_order_qty = order_qty
-        items[sku].report_total_allocated = allocated
-    return items
+        out.append(OdiEntry(
+            entry_id=text(r.get("ODI Entry ID")) or f"ODI-{i:04d}", plant=text(r.get("Plant Code")),
+            source_system=text(r.get("Source System")), ref=norm_ref(r["Sales Order Number / Forcast"]),
+            ref_line=int(num(r.get("SO Line number"))), requested_ship=as_date(r.get("Requested Ship Date")),
+            qty=num(r.get("Quantity")), allocated=num(r.get("Allocated quantity for SO")),
+            wo=norm_ref(r.get("Work Order Number")), wo_qty=num(r.get("Work Order Quantity")),
+            item=norm_sku(r.get("Item Number")), wrap_start=r.get("Wrapping Start Date Time"),
+            wrap_end=r.get("Wrapping End Date Time"), line=text(r.get("Prod Line")), shift=text(r.get("Shift")),
+            oracle_type=text(r.get("Oracle Type")), mips_description=text(r.get("MIPS Description")),
+            sched_batches=num(r.get("MIPS Sched Batches")), act_batches=num(r.get("Act Batches Mixed")),
+            batch_status=text(r.get("Batch Status"))))
+    return out
 
 
-def load_fill_rate(path: Path) -> tuple[list[WmsFillOrder], float]:
-    rows = _table(_rows(path), "Facility")
-    total = next((num(r["Order Qty"]) for r in rows if r.get("Order Type") == "Total:"), 0.0)
-    return fill_orders([r for r in rows if r.get("Order Type") != "Total:"]), total
+def wms_stock(records: list[dict]) -> list[WmsStock]:
+    out = []
+    for i, r in enumerate(records, 1):
+        if r.get("Item Number") is None:
+            continue
+        out.append(WmsStock(
+            inventory_id=text(r.get("Inventory ID")) or f"INV-{i:04d}", sku=norm_sku(r["Item Number"]),
+            description=text(r.get("Item Description")), on_hand=num(r.get("On hand")),
+            available=num(r.get("Available quantity")), allocated=num(r.get("Allocated quantity")),
+            item_type=text(r.get("Item Type")).upper(), facility=text(r.get("Facility")),
+            locator=text(r.get("Locator"))))
+    return out
+
+
+def work_orders(records: list[dict]) -> list[WorkOrder]:
+    return [WorkOrder(
+        wo=norm_ref(r["Work Order Number"]), production_date=as_date(r.get("Production Date")),
+        sku=norm_sku(r.get("FG Oracle Ref")), buss_code=norm_ref(r.get("FG BUSS Code")),
+        description=text(r.get("FG Description")), demand_qty=num(r.get("Forecast / Order Quantity")),
+        line=text(r.get("Prod Line")), shift=text(r.get("Shift")), errors=text(r.get("Scheduling Errors")),
+        wo_qty=num(r.get("Work Order Quantity")), start=as_date(r.get("Work order start date")),
+        completion=as_date(r.get("Work Order Completion Date")), status=text(r.get("Work Order Status")))
+        for r in records if r.get("Work Order Number") is not None]
+
+
+def build(rows: dict[str, list[dict]], files: dict[str, str], as_of: dt.datetime | None = None) -> SourceData:
+    """SourceData from rows per entity name (contract.ENTITIES keys)."""
+    return SourceData(
+        items=items(rows.get("oracle.item", [])),
+        sales_orders=sales_orders(rows.get("buss.sales_order", [])),
+        forecasts=forecasts(rows.get("oracle.forecast", [])),
+        odi=odi_entries(rows.get("odi.batch_mapping", [])),
+        stock=wms_stock(rows.get("wms.inventory", [])),
+        work_orders=work_orders(rows.get("mips.work_order", [])),
+        files=files, as_of=as_of)
+
+
+# --- workbook reader -----------------------------------------------------------
+
+def clean_header(value) -> str:
+    """'Allocated quantity  for SO ' -> 'Allocated quantity for SO': the contract's column name."""
+    return re.sub(r"\s+", " ", str(value)).strip() if value is not None else ""
+
+
+def sheet_rows(ws) -> list[dict]:
+    """Rows below the header (the first row with three or more cells), keyed by cleaned header.
+
+    The sheets differ in layout (Sales Orders starts in column B); empty columns are dropped."""
+    rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
+    idx = next((i for i, r in enumerate(rows) if sum(v is not None for v in r) >= 3), None)
+    if idx is None:
+        return []
+    header = [clean_header(v) for v in rows[idx]]
+    out = []
+    for r in rows[idx + 1:]:
+        if any(v is not None for v in r):
+            out.append({h: (v.strip() if isinstance(v, str) else v) for h, v in zip(header, r) if h})
+    return out
+
+
+def find_workbook(data_dir: Path) -> Path:
+    matches = sorted(Path(data_dir).glob(config.WORKBOOK_GLOB), key=lambda p: p.stat().st_mtime)
+    if not matches:
+        raise FileNotFoundError(f"No workbook matching '{config.WORKBOOK_GLOB}' in {data_dir}")
+    return matches[-1]
+
+
+def load_workbook(path: Path) -> SourceData:
+    from .events import contract   # the sheet each entity is read from
+
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    try:
+        names = {clean_header(n).lower(): n for n in wb.sheetnames}
+        rows = {}
+        for e in contract.ENTITIES.values():
+            sheet = names.get(e.sheet.lower())
+            rows[e.name] = sheet_rows(wb[sheet]) if sheet else []
+    finally:
+        wb.close()  # read-only mode keeps the file handle open until closed
+    return build(rows, {e: f"{path.name} · {contract.ENTITIES[e].sheet} ({len(r)} rows)" for e, r in rows.items()})
 
 
 def load_all(data_dir: Path | None = None) -> SourceData:
-    data_dir = Path(data_dir or config.DATA_DIR)
-    paths = {k: _find(p, data_dir) for k, p in config.SOURCES.items()}
-    fill_orders, fill_total = load_fill_rate(paths["wms_fill_rate"])
-    return SourceData(
-        mips=load_mips(paths["mips_orders"]),
-        fg_runs=load_fg_runs(paths["odi_finished_goods"]),
-        batches=load_batches(paths["odi_batches"]),
-        wms_items=load_wms_order_summary(paths["wms_order_summary"]),
-        fill_orders=fill_orders,
-        fill_report_total=fill_total,
-        files={k: p.name for k, p in paths.items()},
-    )
+    return load_workbook(find_workbook(Path(data_dir or config.DATA_DIR)))

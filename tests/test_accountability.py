@@ -34,6 +34,9 @@ from recon_agent import config as _config
 assert "recon-tests-" in str(_config.FEEDBACK_FILE) and not _config.AI_ENABLED, "tests are not isolated"
 
 
+WO2, WO3 = seed.wo_number(seed.DEFAULT_SALES_DATE, 2), seed.wo_number(seed.DEFAULT_SALES_DATE, 3)
+
+
 def seeded_log() -> EventLog:
     log = EventLog(Path(tempfile.mkdtemp(prefix="recon-acct-")) / "events.db")
     seed.seed(log)
@@ -92,39 +95,49 @@ class AttributionTest(unittest.TestCase):
 
     def test_the_seeded_problems_are_pinned_on_the_right_system(self):
         f = by_id(self.runs["seed"])
-        self.assertEqual(f["R01-900101"].accountability["origin"], "MIPS")
-        self.assertEqual(f["R01-900101"].accountability["impact"], "Over-production")
-        # The recovery run re-ordered demand: MIPS sized it, ODI built it.
-        self.assertEqual(roles(f["R05-900102"])["MIPS"], "Misfired")
-        self.assertEqual(roles(f["R05-900102"])["ODI"], "Affected")
-        self.assertIn("Ordered 2,000 on the recovery run when 800 were still needed",
-                      f["R05-900102"].accountability["systems"][0]["detail"])
-        # Freezer stock: WMS shipped what MIPS cannot see.
-        self.assertEqual(f["R07-900106"].accountability["origin"], "WMS")
-        self.assertEqual(f["R07-900106"].accountability["basis"], "likely")
-        # The order was raised in WMS after MIPS synced: MIPS is stale, WMS is the reference.
-        for fid in ("R09-900107", "R10-900107"):
-            self.assertEqual(roles(f[fid]), {"MIPS": "Misfired", "ODI": "Affected", "WMS": "Reference"})
-        self.assertEqual(f["R09-900107"].accountability["impact"], "Under-production")
-        # Master data: the data cannot say which side is wrong, and the record says so.
-        a = f["R11-900109"].accountability
-        self.assertEqual((a["origin"], a["basis"]), ("Undetermined", "undetermined"))
-        self.assertEqual(roles(f["R11-900109"])["MIPS"], "Conflicting")
-        # Plant-level: the scan is missing in WMS, Oracle is listed for the follow-up.
-        self.assertEqual(roles(f["R12-PLANT"]), {"MIPS": "Not involved", "ODI": "Not involved",
-                                                 "WMS": "Misfired", "Oracle": "To check"})
+        # MIPS sized 950513's work order to the demand left and ignored the stock WMS has available.
+        a = f["R05-950513"].accountability
+        self.assertEqual((a["origin"], a["impact"], a["basis"]), ("MIPS", "Over-production", "certain"))
+        self.assertEqual(roles(f["R05-950513"]), {"MIPS": "Misfired", "ODI": "Affected", "WMS": "Reference"})
+        self.assertIn("Plans 4,840 on work order WO-UBD-20260912-002; 4,840 demand left less 1,140 available "
+                      "is 3,700.", a["systems"][0]["detail"])
+        # ODI's copy of the Colonie order is stale, but MIPS already plans the right demand.
+        a = f["R02-2263255-1"].accountability
+        self.assertEqual((a["origin"], a["handoff"], a["impact"]), ("Integration", "BUSS → ODI", "Traceability gap"))
+        self.assertEqual(roles(f["R02-2263255-1"]), {"MIPS": "Reference", "ODI": "Affected", "WMS": "Not involved",
+                                                     "BUSS": "Reference"})
+        # WMS on hand does not balance; the data cannot say which figure is wrong.
+        a = f["R10-INV-0003"].accountability
+        self.assertEqual((a["origin"], a["basis"], a["impact"]), ("WMS", "undetermined", "Traceability gap"))
+        self.assertEqual(roles(f[f"R11-{WO2}"])["ODI"], "Misfired")
+        self.assertEqual((f[f"R12-{WO3}"].accountability["impact"], roles(f[f"R12-{WO3}"])["WMS"]),
+                         ("Short shipment", "Affected"))
 
-    def test_oracle_rejections_and_lost_postings_are_told_apart(self):
-        r18 = [f for f in self.runs["S8"].findings if f.rule == "R18"]
-        self.assertEqual(sorted(f.accountability["origin"] for f in r18), ["Integration", "Oracle"])
-        for f in r18:
-            self.assertEqual(f.accountability["impact"], "Financial posting gap")
-            self.assertEqual(roles(f)["WMS"], "Reference")
+    def test_the_scenarios_are_pinned_on_the_right_system(self):
+        # S1: MIPS did its sums right on ODI's stale copy of the demand: the interface is at fault.
+        for fid in ("R04-76108", "R05-76108"):
+            a = by_id(self.runs["S1"])[fid].accountability
+            self.assertEqual((a["origin"], a["handoff"], a["basis"]), ("Integration", "BUSS/Oracle → ODI", "certain"))
+            self.assertEqual(roles(by_id(self.runs["S1"])[fid])["MIPS"], "Affected")
+        a = by_id(self.runs["S4"])["R04-76108"].accountability
+        self.assertEqual((a["origin"], a["handoff"]), ("Integration", "WMS → ODI"))
+        # S5: a planner override in MIPS, which ODI never received.
+        r05, r07 = by_id(self.runs["S5"])["R05-76108"], by_id(self.runs["S5"])["R07-WO-UBD-20260912-001"]
+        self.assertEqual((r05.accountability["origin"], r05.accountability["impact"]), ("MIPS", "Over-production"))
+        self.assertEqual((r07.accountability["origin"], r07.accountability["handoff"]), ("Integration", "MIPS → ODI"))
+        a = by_id(self.runs["S8"])["R06-76108"].accountability
+        self.assertEqual((a["origin"], a["impact"], a["basis"]), ("MIPS", "Under-production", "certain"))
+        self.assertEqual(by_id(self.runs["S6"])["R10-INV-0001"].accountability["impact"], "Overstated inventory")
+        f = by_id(self.runs["S10"])["R13-76108"]
+        self.assertEqual(f.accountability["origin"], "Undetermined")
+        self.assertEqual((roles(f)["BUSS"], roles(f)["MIPS"]), ("Conflicting", "Conflicting"))
 
-    def test_returns_and_stale_orders_in_the_scenarios(self):
-        self.assertEqual(roles(by_id(self.runs["S5"])["R19-TK-0010"])["WMS"], "Misfired")
-        a = by_id(self.runs["S6"])["R09-900112"].accountability
-        self.assertEqual((a["origin"], a["handoff"], a["impact"]), ("MIPS", "WMS → MIPS", "Under-production"))
+    def test_quantities_are_written_unsigned(self):
+        for name, res in self.runs.items():
+            for f in res.findings:
+                for sy in f.accountability["systems"]:
+                    with self.subTest(run=name, flag=f.id, system=sy["system"]):
+                        self.assertNotRegex(sy["detail"], r"(?<![\w(])-\d")
 
     def test_kpis_total_the_flags_by_origin(self):
         for name, res in self.runs.items():
@@ -134,56 +147,8 @@ class AttributionTest(unittest.TestCase):
                 self.assertEqual(sum(r["flags"] for r in res.kpis["by_impact"].values()), len(res.findings))
                 dollars = [r["dollars"] for r in origins.values()]
                 self.assertEqual(dollars, sorted(dollars, reverse=True))
-        self.assertIn("Integration (WMS → Oracle)", self.runs["S8"].kpis["by_origin"])
-        self.assertIn("Where the flags started: MIPS", self.runs["seed"].narration["shift_briefing"])
-
-
-class PlanningChangeTest(unittest.TestCase):
-    """An operator raises 900102's supply-plan line ML-0005 from 5,000 to 7,000 (reported on the demo)."""
-
-    def setUp(self):
-        import datetime as dt
-        from recon_agent.events.clock import SimClock
-        self.log = seeded_log()
-        clock = SimClock(self.log, cache_seconds=0)
-        clock.advance(dt.timedelta(minutes=1))
-        self.publish = lambda change: self.log.publish(
-            scenarios._resolve(self.log, change, clock.now(), seed.DEFAULT_SALES_DATE), "simulator:test", clock.now())
-        self.publish(scenarios.U("mips.order_line", "ML-0005", Order_Quantity=7000))
-
-    def test_the_raise_is_a_mips_planning_change_not_stale_data(self):
-        f = by_id(result(self.log))["R09-900102"]
-        a = f.accountability
-        self.assertEqual((a["impact"], a["origin"], a["failure_type"], a["handoff"]),
-                         ("Over-production", "MIPS", "Planning change", None))
-        self.assertIn("MIPS demand rose by 2,000 after production was ordered", a["failure_point"])
-        self.assertEqual(roles(f), {"MIPS": "Misfired", "ODI": "To check", "WMS": "Reference"})
-        self.assertIn("Plans 8,000, 2,000 more than the 6,000 on order in WMS.", a["systems"][0]["detail"])
-        for s in a["systems"]:   # quantities are written unsigned ("2,000 more", never "-2,000 more")
-            self.assertNotRegex(s["detail"], r"(?<![\w(])-\d")
-
-    def test_the_correction_takes_the_excess_off_the_line_that_was_raised(self):
-        from recon_agent import sources
-        from recon_agent.web.store import Store
-        store = Store(sources.EventFeed(self.log.path))
-        _, f = store.find("R09-900102")
-        p = store.proposal(f)
-        self.assertEqual((p.key, p.expected, p.changes),
-                         ("ML-0005", {"Order Quantity": 7000}, {"Order Quantity": 5000}))   # not BUSS ML-0004
-        self.publish(scenarios.U("mips.order_line", "ML-0005", Order_Quantity=5000))
-        self.assertNotIn("R09-900102", by_id(result(self.log)))
-
-    def test_no_proposal_when_no_one_line_can_absorb_the_excess(self):
-        from recon_agent import sources
-        from recon_agent.web.store import Store
-        self.publish(scenarios.U("mips.order_line", "ML-0005", Order_Quantity=0))
-        self.publish(scenarios.U("mips.order_line", "ML-0004", Order_Quantity=9000))
-        # MIPS 9,000 vs WMS 6,000 is fine for ML-0004 alone; make the excess larger than any line.
-        self.publish(scenarios.U("mips.order_line", "ML-0005", Order_Quantity=8000))
-        store = Store(sources.EventFeed(self.log.path))
-        _, f = store.find("R09-900102")
-        self.assertEqual(f.units, -11000)
-        self.assertIsNone(store.proposal(f))
+        self.assertIn("Integration (BUSS/Oracle → ODI)", self.runs["S1"].kpis["by_origin"])
+        self.assertIn("Where the flags started: ODI", self.runs["seed"].narration["shift_briefing"])
 
 
 class FigureCheckTest(unittest.TestCase):
@@ -191,18 +156,18 @@ class FigureCheckTest(unittest.TestCase):
 
     def setUp(self):
         self.res = result(seeded_log())
-        self.f = by_id(self.res)["R05-900102"]
+        self.f = by_id(self.res)["R05-950513"]
         self.payloads = {f.id: ai._finding_payload(f) for f in self.res.findings}
 
     def entry(self, **over) -> dict:
         e = {"id": self.f.id, "owner": "Production Planner",
-             "explanation": "Run 1 wrapped 5,200, so only 800 were needed; the recovery run ordered 2,000 and "
-                            "made 1,200 too many. Apply the 1,200 to the next sales day.",
-             "root_cause": "MIPS sized the recovery run to the order, not the shortfall.",
-             "cause_chain": [{"system": "MIPS", "step": "Ordered 2,000 on the recovery run."},
-                             {"system": "ODI", "step": "Wrapped 7,200 across 2 runs."}],
-             "impact": "1,200 units of over-production.", "verify": "The recovery run's order in ODI.",
-             "evidence_used": ["runs", "need_after_first_run"], "linked_findings": []}
+             "explanation": "MIPS plans 4,840 on the work order, but 4,840 demand left less 1,140 available is "
+                            "3,700. Cut the work order to 3,700.",
+             "root_cause": "MIPS sized the work order to the demand left, not the shortfall.",
+             "cause_chain": [{"system": "MIPS", "step": "Planned 4,840 on the work order."},
+                             {"system": "WMS", "step": "Has 1,140 available."}],
+             "impact": "1,140 units of over-production.", "verify": "The MIPS work order.",
+             "evidence_used": ["shortfall", "wms_available"], "linked_findings": []}
         return {**e, **over}
 
     def test_figures_from_the_engine_pass(self):
@@ -212,22 +177,22 @@ class FigureCheckTest(unittest.TestCase):
         self.assertTrue(chk["chain_starts_at_origin"])
 
     def test_an_invented_figure_is_reported(self):
-        e = self.entry(explanation="The recovery run made 1,350 too many.")
+        e = self.entry(explanation="The work order makes 1,350 too many.")
         self.assertEqual(ai.check_entry(e, self.f, self.payloads, self.res.kpis)["check"]["unverified_figures"],
                          ["1,350"])
 
     def test_codes_dates_and_small_counts_are_not_figures(self):
         checked, unknown = ai.check_figures(
-            ["R05 on ML-0017 and SU900210 at 2026-11-05 20:31, across 3 lines in run 2."], set())
+            ["R05 on ODI-0017 and WO-UBD-20260912-001 at 2026-11-05 20:31, across 3 lines in run 2."], set())
         self.assertEqual(unknown, ["2026", "20"])   # the year and hour are checked; the rest are codes
         checked, unknown = ai.check_figures(["MIPS was -1,200 off; 1,200."], {1200.0})
         self.assertEqual((checked, unknown), (2, []))
 
     def test_bad_citations_are_dropped_and_recorded(self):
-        e = self.entry(evidence_used=["runs", "made_up_key"], linked_findings=["R99-NOPE", self.f.id],
+        e = self.entry(evidence_used=["shortfall", "made_up_key"], linked_findings=["R99-NOPE", self.f.id],
                        cause_chain=[{"system": "Excel", "step": "x"}, {"system": "ODI", "step": "Built it."}])
         out = ai.check_entry(e, self.f, self.payloads, self.res.kpis)
-        self.assertEqual(out["evidence_used"], ["runs"])
+        self.assertEqual(out["evidence_used"], ["shortfall"])
         self.assertEqual(out["linked_findings"], [])
         self.assertEqual([s["system"] for s in out["cause_chain"]], ["ODI"])
         chk = out["check"]
@@ -237,10 +202,12 @@ class FigureCheckTest(unittest.TestCase):
         self.assertFalse(chk["chain_starts_at_origin"])   # the rules say MIPS, the model started at ODI
 
     def test_a_linked_flags_figures_count_as_known(self):
-        f09, f10 = by_id(self.res)["R09-900107"], by_id(self.res)["R10-900107"]
-        e = {"id": f10.id, "explanation": "MIPS last modified at 20:31 still plans 3,500.",
-             "linked_findings": [f09.id]}
-        self.assertEqual(ai.check_entry(e, f10, self.payloads, self.res.kpis)["check"]["unverified_figures"], [])
+        r02, r10 = by_id(self.res)["R02-2263255-1"], by_id(self.res)["R10-INV-0003"]
+        e = {"id": r10.id, "explanation": "76105 also has an ODI copy at 800 instead of 900.",
+             "linked_findings": [r02.id]}
+        self.assertEqual(ai.check_entry(e, r10, self.payloads, self.res.kpis)["check"]["unverified_figures"], [])
+        e["linked_findings"] = []
+        self.assertEqual(ai.check_entry(e, r10, self.payloads, self.res.kpis)["check"]["unverified_figures"], ["800", "900"])
 
 
 class AuditLogTest(unittest.TestCase):
@@ -261,7 +228,7 @@ class AuditLogTest(unittest.TestCase):
         ids = re.findall(r'"id": "(R\d\d-[^"]+)"', messages[1].content[0].text)
         findings = [{"id": i, "owner": "Production Planner", "explanation": f"{i}: see the evidence.",
                      "root_cause": "x", "cause_chain": [{"system": "MIPS", "step": "Misfired."}],
-                     "impact": "Over-production.", "verify": "The MIPS line.", "evidence_used": [],
+                     "impact": "Over-production.", "verify": "The MIPS work order.", "evidence_used": [],
                      "linked_findings": []} for i in ids]
         findings[0]["explanation"] = "It made 9,999 too many."   # one invented figure
         return reply(json.dumps({"shift_briefing": "MIPS caused the most exposure.", "top_actions": ["act"],
@@ -296,12 +263,12 @@ class AuditLogTest(unittest.TestCase):
                     ai.narrate_with_model(self.res.findings[:3], self.res.kpis)
 
     def test_an_assistant_answer_is_logged_with_its_tool_calls(self):
-        call = SimpleNamespace(id="c1", name="get_sku_position", arguments='{"sku": "900102"}')
+        call = SimpleNamespace(id="c1", name="get_sku_position", arguments='{"sku": "950513"}')
         turns = iter([reply("", tool_calls=[call]),
-                      reply("MIPS ordered 8,000 for 900102 and the plant wrapped 7,200, about 4,321 extra.")])
+                      reply("MIPS plans 4,840 for 950513 against a 3,700 shortfall, about 4,321 extra.")])
         with mock.patch.object(ai, "credentials_available", lambda: True), \
                 mock.patch.object(ai, "_chat", lambda *a, **k: next(turns)):
-            out = ai.ask_audited("why so much 900102?", self.res.positions, self.res.findings, user="ana")
+            out = ai.ask_audited("why so much 950513?", self.res.positions, self.res.findings, user="ana")
         [rec] = self.lines()
         self.assertEqual((rec["kind"], rec["user"], rec["audit_id"]), ("ask", "ana", out["audit_id"]))
         self.assertEqual(rec["tool_calls"][0]["tool"], "get_sku_position")
@@ -331,24 +298,24 @@ class CardTest(unittest.TestCase):
         client = TestClient(app)
         client.post("/signin", data={"username": "aria", "password": "test-password-1"}, follow_redirects=False)
 
-        card = client.get("/row/900107", headers={"HX-Request": "true"}).text   # shown with or without AI
+        card = client.get("/row/950513", headers={"HX-Request": "true"}).text   # shown with or without AI
         self.assertIn("Started in", card)
-        self.assertIn("Under-production", card)
+        self.assertIn("Over-production", card)
         self.assertIn('role--misfired', card)
-        # WMS shows the order was raised after it was placed (800 → 1,000): MIPS provably stale.
-        self.assertIn("Still plans the original 3,500; WMS has 3,700 on order.", card)
+        self.assertIn("Plans 4,840 on work order WO-UBD-20260912-002", card)
+        self.assertIn("Shortfall: the work order", card)   # the equation, step by step
 
         end = time.monotonic() + 5
         while time.monotonic() < end and client.get("/api/status").json().get("narration") != "ai":
             time.sleep(0.05)
-        card = client.get("/row/900102", headers={"HX-Request": "true"}).text
+        card = client.get("/row/76105", headers={"HX-Request": "true"}).text
         self.assertIn("How it happened", card)
         audit_id = json.loads(audit.read_text(encoding="utf-8").splitlines()[-1])["audit_id"]
         self.assertIn(audit_id, card)
-        self.assertIn("not in the engine's data: 9,999", card)   # R05-900102 ranks first
+        self.assertIn("not in the engine's data: 9,999", card)   # R12 on 76105 ranks first
         flags = {f["id"]: f for f in client.get("/api/flags").json()}
-        self.assertEqual(flags["R05-900102"]["accountability"]["origin"], "MIPS")
-        self.assertEqual(flags["R05-900102"]["ai"]["audit_id"], audit_id)
+        self.assertEqual(flags["R12-WO-UBD-20260912-003"]["accountability"]["origin"], "ODI")
+        self.assertEqual(flags["R12-WO-UBD-20260912-003"]["ai"]["audit_id"], audit_id)
         briefing = client.get("/briefing", headers={"HX-Request": "true"}).text
         self.assertIn("Where today's flags started", briefing)
 

@@ -1,4 +1,4 @@
-# Event Contract v2 and Simulated Feed
+# Event Contract v3 and Simulated Feed
 
 How source-system changes reach the reconciliation agent as events during the POC, and what each event must contain. This document covers Phases 0–5 of the real-time plan:
 
@@ -6,14 +6,14 @@ How source-system changes reach the reconciliation agent as events during the PO
 - **Phase 1:** the event-fed engine.
 - **Phase 2:** the source simulator.
 - **Phase 3:** server push, latency and debounced AI.
-- **Phase 4:** the scenario library, plus R18 and R19.
+- **Phase 4:** the scenario library.
 - **Phase 5:** integration faults and write-back.
 
-**Status:** POC. All event data is synthetic. [Section 6](#6-assumptions-to-confirm-with-bimbo-it) lists every assumption about MIPS, ODI, WMS and Oracle Fusion that the real integrations must confirm. The code holds the authoritative version: [recon_agent/events/contract.py](../recon_agent/events/contract.py).
+**Status:** POC. All event data is dummy data, built from the business team's 9 Nov mapping workbook ([DATA_MODEL_9NOV.md](DATA_MODEL_9NOV.md)). [Section 6](#6-assumptions-to-confirm-with-bimbo-it) lists every assumption about BUSS, Oracle, MIPS, ODI and WMS that the real integrations must confirm. The code holds the authoritative version: [recon_agent/events/contract.py](../recon_agent/events/contract.py).
 
 ## 1. Why events
 
-The daily Excel extracts show one end-of-day picture. They can't show how the worklist reacts when a source system changes during a shift, in what order, or how fast. In production, GoldenGate (MIPS change data capture), Oracle Integration 3 (WMS, BUSS and Fusion business events) and OCI Streaming will deliver row-level changes. The POC simulates that whole path, including how it fails:
+The source workbook shows one end-of-day picture. They can't show how the worklist reacts when a source system changes during a shift, in what order, or how fast. In production, GoldenGate (MIPS change data capture), Oracle Integration 3 (BUSS, WMS and Oracle business events) and OCI Streaming will deliver row-level changes. The POC simulates that whole path, including how it fails:
 
 ```
  System B: source simulator (:8100)  · CLI · seed · scenarios         ◀── POST /oic/corrections
@@ -43,7 +43,7 @@ When a real connector arrives, it writes the same events and nothing downstream 
 | `event_id` | UUID | One per source change. A duplicate delivery repeats it, so the consumer can ignore the copy. |
 | `copy` | integer | 0 for the first delivery, 1 or more for a duplicate. |
 | `source` | `MIPS` \| `ODI` \| `WMS` \| `ORACLE` | System that owns the row. Fixed per entity. |
-| `entity` | string | Row type, e.g. `wms.item_order` (section 4). |
+| `entity` | string | Row type, e.g. `buss.sales_order` (section 4). |
 | `op` | `I` \| `U` \| `D` | Insert, update or delete, as GoldenGate `op_type`. |
 | `key` | string | Row key: the value of the entity's key column. |
 | `before` | object \| null | Full row image before the change (null for an insert). |
@@ -54,7 +54,7 @@ When a real connector arrives, it writes the same events and nothing downstream 
 | `scenario` | string \| null | Tag of the scripted scenario that made it. |
 | `note` | string \| null | Free text for the operator ("Route 27 cut back"). |
 
-Row images are JSON objects keyed by the **client's own extract column names**. For the v2 entities (section 4), the names follow WMS report style and Oracle Fusion REST style. Dates are `YYYY-MM-DD`, datetimes `YYYY-MM-DDTHH:MM:SS`, numbers are JSON numbers, and an empty value is `null`.
+Row images are JSON objects keyed by the **business team's own workbook column names** (section 4). Dates are `YYYY-MM-DD`, datetimes `YYYY-MM-DDTHH:MM:SS`, numbers are JSON numbers, and an empty value is `null`.
 
 ## 3. Semantics
 
@@ -74,70 +74,62 @@ Row images are JSON objects keyed by the **client's own extract column names**. 
 
   So duplicated and reordered delivery can never show an old value. Delayed and dropped delivery do show: the worklist is behind the source until the change arrives. Because images are full, the next update to the same row heals a dropped one.
 - **Projection.** Rows are read in key order (the source's own line sequence), so the order in which events for *different* rows arrive never changes the result.
-- **Re-reconciliation.** A watcher thread in the worklist checks every 0.5 s whether the log moved. It also checks whether plant time has passed the next R18 deadline, because time alone can raise a flag. When either is true, it re-runs the engine, marks the rows whose flags changed, and commits. Open screens hear about it by server push (`/stream`).
+- **Re-reconciliation.** A watcher thread in the worklist checks every 0.5 s whether the log moved. When it has, it re-runs the engine, marks the rows whose flags changed, and commits. Open screens hear about it by server push (`/stream`).
 - **Latency.** Event-to-worklist latency is the first commit that covers an event minus its `emitted_ts`, over the last 100 non-seed events. Integration delay is separate: it's what the faults inject.
 
 ## 4. Entities
 
-| Entity | Source | Replaces / adds | Key |
-|---|---|---|---|
-| `mips.order_line` | MIPS | MIPS Order Data | `Order Line ID` (synthetic) |
-| `odi.finished_good` | ODI | ODI Finished Good Data | `FGEntryID` (synthetic) |
-| `odi.batch` | ODI | ODI Batch Data | `BatchEntryID` (synthetic) |
-| `wms.order` | WMS | WMS Fill Rate Report | `Order Nbr` |
-| `wms.item_order` | WMS | WMS Order Summary Report by Item | `Item Line ID` (synthetic) |
-| `wms.ticket` | WMS | *v2*: receipt tickets (plant to warehouse or freezer) | `Ticket Nbr` |
-| `wms.transaction` | WMS | *v2*: receipts, shipments, returns to plant, freezer moves | `Txn Nbr` |
-| `oracle.inventory_txn` | ORACLE | *v2*: Fusion inventory postings of WMS transactions | `TransactionId` |
+v3 has one entity per sheet of the business team's workbook `BIMBO_MIPS_WMS_ODI_Data_9th_NOV.xlsx`. It
+replaces the v2 entities, which followed the five daily extracts.
 
-The first five follow the extracts in name and order. The synthetic key columns, plus `Sales Date` on `wms.item_order` (which the Excel report prints once in the header), are the only additions. The three v2 entities carry detail that no extract has. R18, R19 and the returns term of the net-requirement equation need it.
+| Entity | Source | Workbook sheet | Key |
+|---|---|---|---|
+| `buss.sales_order` | BUSS | Sales Orders | `SO Line ID` (synthetic: Order Number-Order Line) |
+| `oracle.forecast` | ORACLE | Oracle Planning & Forecast | `Forecast ID` |
+| `oracle.item` | ORACLE | ITEM Master | `Item Number` |
+| `mips.work_order` | MIPS | MIPS | `Work Order Number` |
+| `odi.batch_mapping` | ODI | ODI Batch Data Entry Mapping | `ODI Entry ID` (synthetic) |
+| `wms.inventory` | WMS | WMS | `Inventory ID` (synthetic) |
+
+Column names are the workbook's own, with whitespace normalised (`Quantity ` → `Quantity`,
+`Allocated quantity  for SO ` → `Allocated quantity for SO`). The workbook's spelling stays (`Forcast`).
+The synthetic keys are the only additions. The Excel feed reads the workbook with the same mappers, so the
+workbook and the event log reconcile identically (`tests/test_events.py`).
 
 <!-- columns:begin (generated from contract.py) -->
-**`mips.order_line`**: MIPS schedule line: a BUSS sales order or an OCloud supply-plan line (MIPS Order Data).
+**`buss.sales_order`**: Customer order line received from BUSS (Sales Orders).
 
-`Order Line ID` (str, **key** (synthetic)) · `Plant Code` (str) · `Plant Name` (str) · `Schedule Date` (date, required) · `Offset Sales Date` (date, required) · `BUSS Sales Date` (date) · `Order Moved` (bool) · `Product Sales Date` (date) · `Requested Ship Date` (date) · `Production Date` (date) · `FG Oracle Ref` (str, required) · `FG BUSS Code` (str) · `FG Description` (str) · `Order Quantity` (number, required) · `Container Code` (str) · `Units per Container` (number) · `Units Per Carton` (number) · `Containers per Rack` (number) · `Retail Price` (number) · `Closed` (str) · `Source System` (str, required) · `Last Modify Date Time` (datetime) · `Scheduling Errors` (str)
+`SO Line ID` (str, **key** (synthetic)) · `Order Number` (str, required) · `Order Line` (number) · `Order Type` (str) · `Order Date` (date) · `Customer Name` (str) · `Ship-To Location (USA)` (str) · `FG BUSS Code` (str) · `Item Number` (str, required) · `Item Description` (str) · `UOM` (str) · `Order Quantity` (number, required) · `Requested Ship Date` (date) · `Sales Date` (date) · `Price` (number)
 
-**`odi.finished_good`**: ODI / Oracle production result for one SKU in one run (ODI Finished Good Data).
+**`oracle.forecast`**: Expected demand planned in Oracle (Oracle Planning & Forecast).
 
-`FGEntryID` (str, **key** (synthetic)) · `PlantName` (str) · `SalesDate` (date, required) · `ProductionStartDateTime` (datetime) · `ProductionEndDateTime` (datetime) · `LineCode` (str, required) · `ShiftName` (str) · `OracleTypeCode` (str, required) · `LegacyFGNumber` (str) · `OracleFGNumber` (str, required) · `OCloudFGItemStructure` (str) · `OracleFGDescription` (str) · `NetUnitsOrdered` (number) · `ActualWrappedUnits` (number) · `ExpectedEndingInventoryQty` (number) · `MIPSBeginningInventoryQty` (number) · `MIPSInventoryAdjustmentQty` (number) · `MIPSOrderQty` (number) · `MIPSOrderAdjustmentQty` (number) · `ActualDamagedWeightWithWrap` (number) · `ActualDamagedUnitsWithWrap` (number) · `ActualDamagedWeightWithoutWrap` (number) · `ActualDamagedUnitsWithoutWrap` (number) · `TotalActualDamagedUnits` (number) · `TheoreticalRunTime` (number) · `TotalPieces` (number) · `OraclePiecesPerPkg` (number)
+`Forecast ID` (str, **key**) · `Forecast Date` (date) · `Item Number` (str, required) · `Item Description` (str) · `UOM` (str) · `Item Type` (str) · `Plant` (str) · `Forecast / Required Quantity` (number, required)
 
-**`odi.batch`**: ODI batch (mixing) record for one formula run (ODI Batch Data).
+**`oracle.item`**: Product catalogue: finished goods (FG) and raw materials (RM) (ITEM Master).
 
-`BatchEntryID` (str, **key** (synthetic)) · `PlantName` (str) · `SalesDate` (date, required) · `WrappingStartDateTime` (datetime) · `WrappingEndDateTime` (datetime) · `Prod Line` (str, required) · `Shift` (str) · `Oracle Type` (str, required) · `Oracle Formula` (str) · `MIPS Description` (str) · `MIPS Sched Batches` (number) · `Scrap Dough Weight` (number) · `Act Batches Mixed` (number) · `Total Raw Ingr Adjust Weight` (number) · `Total Other Batch Weight` (number) · `Total Baked Ingr Weight` (number) · `Total Remix Batch Weight` (number) · `Tot Batch Pieces Counted Qty` (number) · `Actual Damaged Weight w/o Wrap Weight` (number) · `Theo Batch Pieces Qty` (number) · `Batch Piece Var Qty` (number) · `Batch Piece Var %` (number) · `FG & FG Scrap Pieces Qty` (number) · `Final Piece Variance Qty` (number) · `Final Piece Variance %` (number)
+`Item Number` (str, **key**) · `Item Description` (str) · `UOM` (str) · `Item Type` (str)
 
-**`wms.order`**: WMS customer order header with fill and shipping progress (WMS Fill Rate Report).
+**`mips.work_order`**: Production work order planned in MIPS for the demand left after allocated stock (MIPS).
 
-`Facility` (str) · `Order Nbr` (str, **key**) · `Ship to Name` (str) · `Progress` (str) · `Route Nbr` (str) · `Order Type` (str, required) · `Sales Date` (date) · `Order Qty` (number, required) · `Allocated Qty` (number) · `Packed Qty` (number) · `Loaded Qty` (number) · `Shipped Qty` (number) · `Short Qty` (number) · `% Allocated` (number) · `% Loaded` (number) · `% Shipped` (number)
+`Production Date` (date) · `Work Order Number` (str, **key**) · `FG Oracle Ref` (str, required) · `FG BUSS Code` (str) · `FG Description` (str) · `Forecast / Order Quantity` (number) · `Prod Line` (str) · `Shift` (str) · `Scheduling Errors` (str) · `Work Order Quantity` (number, required) · `Work order start date` (date) · `Work Order Completion Date` (date) · `Work Order Status` (str)
 
-**`wms.item_order`**: WMS order quantity and allocation for one item and customer (WMS Order Summary Report by Item, one row per customer line).
+**`odi.batch_mapping`**: ODI's join of one demand line (BUSS order or Oracle forecast) to its work order and MIPS batches (ODI Batch Data Entry Mapping).
 
-`Item Line ID` (str, **key** (synthetic)) · `Sales Date` (date) · `Item Nbr` (str, required) · `Units per Container` (number) · `Description` (str) · `Cust Name` (str, required) · `Original Ord Qty` (number) · `Order Qty` (number, required) · `Order Stack Qty` (number) · `Order Tray Qty` (number) · `Order Units Qty` (number) · `Allocated Stacks` (number) · `Allocated Trays` (number) · `Allocated Units Qty` (number) · `Stacks Remaining` (number) · `Trays Remaining` (number) · `Completion%` (str)
+`ODI Entry ID` (str, **key** (synthetic)) · `Plant Code` (str) · `Schedule Date` (date) · `Source System` (str, required) · `BUSS Sales / Forcast Date` (date) · `Product Sales Date` (date) · `Requested Ship Date` (date) · `Sales Order / Forcast Date` (date) · `Sales Order Number / Forcast` (str, required) · `SO Line number` (number) · `Quantity` (number, required) · `Allocated quantity for SO` (number) · `Work Order Number` (str) · `Work Order Date` (date) · `Work Order Quantity` (number) · `Item Number` (str) · `Wrapping Start Date Time` (datetime) · `Wrapping End Date Time` (datetime) · `Plant Name` (str) · `Prod Line` (str) · `Shift` (str) · `Oracle Type` (str) · `Oracle Formula` (str) · `MIPS Description` (str) · `MIPS Sched Batches` (number) · `Act Batches Mixed` (number) · `Batch Status` (str)
 
-**`wms.ticket`**: WMS receipt ticket: finished goods received from a plant run into the warehouse or freezer.
+**`wms.inventory`**: Warehouse stock for one item and locator; all on-hand stock is kept in WMS only (WMS).
 
-`Ticket Nbr` (str, **key**) · `Sales Date` (date) · `Item Nbr` (str, required) · `Description` (str) · `Lot Nbr` (str) · `Run Code` (str) · `Location` (str) · `Received Date Time` (datetime) · `Received Qty` (number, required) · `Returned Qty` (number) · `Net Received Qty` (number) · `Status` (str)
-
-**`wms.transaction`**: WMS inventory transaction (receipt, ship, return to plant, freezer move) that Oracle must post.
-
-`Txn Nbr` (str, **key**) · `Txn Type` (str, required) · `Txn Date Time` (datetime, required) · `Item Nbr` (str, required) · `Qty` (number, required) · `Ticket Nbr` (str) · `Order Nbr` (str) · `Lot Nbr` (str) · `Reason Code` (str) · `User` (str)
-
-**`oracle.inventory_txn`**: Oracle Fusion inventory transaction posted from a WMS transaction (SourceReference = Txn Nbr).
-
-`TransactionId` (str, **key**) · `SourceReference` (str, required) · `TransactionTypeName` (str) · `ItemNumber` (str, required) · `TransactionQuantity` (number, required) · `TransactionUnitOfMeasure` (str) · `Subinventory` (str) · `LotNumber` (str) · `TransactionDate` (datetime) · `PostedDate` (datetime) · `ProcessStatus` (str, required) · `ErrorMessage` (str)
+`Inventory ID` (str, **key** (synthetic)) · `Item Number` (str, required) · `Item Description` (str) · `On hand` (number, required) · `Available quantity` (number) · `Allocated quantity` (number) · `UOM` (str) · `Item Type` (str) · `Facility` (str) · `Company / Inventory Organization` (str) · `Locator` (str)
 <!-- columns:end -->
 
 Run `python -m recon_agent events entities` for the same list in the terminal.
 
-**Rules on the v2 detail**
-- **R18, WMS transaction not posted in Oracle within 10 minutes (High).** A `wms.transaction` with no `oracle.inventory_txn` in `ProcessStatus = POSTED` whose `SourceReference` is its `Txn Nbr`, 10 or more plant minutes after `Txn Date Time`. A posting in `ERROR` counts as not posted, and its message is shown.
-- **R19, return to plant did not reduce the received quantity (High at 500 units or more, otherwise Medium).** `RETURN_TO_PLANT` transactions against a ticket add up to more than the ticket's `Returned Qty`. WMS derives `Net Received Qty = Received Qty − Returned Qty`, so the ticket still shows the returned units as received.
-- **Returns term.** Each SKU's `RETURN_TO_PLANT` units are added back to the net requirement. Returned product was wrapped, but it isn't usable supply.
-
-**Live vs report differences.** A live feed has no printed report totals, so R13's per-item subtotal check doesn't apply in event mode. The plant-level R13 check stays: it compares the `wms.order` headers with the `wms.item_order` lines.
+No column is derived. In particular WMS `On hand`, `Available quantity` and `Allocated quantity` are kept
+independent, because in the real system they can drift apart, and that drift is rule R10.
 
 ## 5. Simulated clock
 
-Rules and SLAs depend on time: the 15-minute High acknowledgment and R18's 10-minute posting window. The plant clock is stored in the log file, so every process reads the same time:
+SLAs depend on time: the 15-minute High acknowledgment. The plant clock is stored in the log file, so every process reads the same time:
 
 ```
 sim_now = anchor_sim + (wall_now − anchor_wall) × rate     while running
@@ -145,68 +137,64 @@ sim_now = anchor_sim                                       while paused
 ```
 
 - **Controls:** set, advance, rate, pause and resume. Each one re-anchors at the current wall time, so simulated time never jumps unless asked to. With no clock stored, simulated time equals wall time.
-- **Who uses it:** in event mode the worklist uses this clock for "loaded at", claims, acknowledgments, the High SLA and R18.
+- **Who uses it:** in event mode the worklist uses this clock for "loaded at", claims, acknowledgments and the High SLA.
 - **Speed:** `--rate 60` makes 15 plant minutes pass in 15 real seconds.
 
 ## 6. Assumptions to confirm with Bimbo IT
 
 | # | Assumption | Why it matters |
 |---|---|---|
-| A1 | MIPS schedule lines have a stable primary key that GoldenGate can capture (stood in for by `Order Line ID`). | Updates and deletes must identify the row. Without a key there is no CDC. |
-| A2 | MIPS's line sequence for a SKU is stable and orderable (the POC orders by key). | R01 (inventory applied to the first line only) depends on which line is first. |
-| A3 | ODI finished-good and batch records have stable IDs (stood in for by `FGEntryID` and `BatchEntryID`) and are updated in place as a run progresses. | The same reason as A1, for production results. |
-| A4 | WMS exposes order headers and per-item order lines as separate entities, each with a key (`Order Nbr` is native; `Item Line ID` stands in for an order-line ID). | R09, R10 and R13 compare the two. |
-| A5 | Each source system can give a change timestamp per row (`source_ts`) and a commit position (`source_seq`, e.g. the GoldenGate CSN). | Latency and R18 need when a change happened. Consumer ordering needs the commit position. |
-| A6 | Column names and meanings match the extract headers the plant sends today. | The adapters map by column name. |
-| A7 | Full row images are available (GoldenGate `GETUPDATEBEFORES` / full supplemental logging). | Without them the consumer can't rebuild a row, and a dropped update can't heal. |
-| A8 | Oracle Fusion inventory transactions carry the WMS transaction number in a reference field (`SourceReference` here) and expose posting status and error text. Fusion REST-style names are assumed. | R18 matches WMS to Oracle on this reference. |
-| A9 | WMS receipt tickets keep a returned quantity, and a return-to-plant transaction names the ticket it reduces. | R19 compares the two. |
-| A10 | The 10-minute posting SLA is measured from the WMS transaction time, in plant time. | It decides when R18 fires. |
-| A11 | Oracle Integration can accept a correction as a row-level change, with optimistic concurrency: the values it expects the row to still have. | Write-back (section 10) depends on it. |
+| A1 | BUSS order lines have a stable key (stood in for by `SO Line ID` = Order Number-Order Line). | Updates and deletes must identify the row. Without a key there is no CDC. |
+| A2 | Every ODI mapping row has a stable ID (stood in for by `ODI Entry ID`) and is updated in place. | The same reason, for the ODI join. |
+| A3 | ODI's `Sales Order Number / Forcast` holds the BUSS order number or the Oracle forecast ID, and `SO Line number` the BUSS order line. | R01, R02 and R03 match demand to ODI on it. |
+| A4 | WMS exposes stock per item and locator with a key (stood in for by `Inventory ID`), and keeps on hand, available and allocated as separate figures. | R10 compares them; the shortfall uses available and allocated. |
+| A5 | MIPS `Forecast / Order Quantity` is the demand less allocated stock, and `Work Order Quantity` is the shortfall, as in the workbook's worked example. | R04 and R05 check these two quantities. |
+| A6 | An item with only an Oracle forecast (no order, work order, ODI row or stock) is planning, not yet scheduled. | Such items get no position, so they raise no flags. |
+| A7 | Each source system can give a change timestamp per row (`source_ts`) and a commit position (`source_seq`). | Latency and consumer ordering need them. |
+| A8 | Full row images are available (GoldenGate `GETUPDATEBEFORES` / full supplemental logging). | Without them the consumer can't rebuild a row, and a dropped update can't heal. |
+| A9 | Oracle Integration can accept a correction as a change to one or more rows of one entity, applied in one transaction, with optimistic concurrency (the values it expects each row to still have). | Write-back (section 10) depends on it. |
 
 ## 7. Starting dataset (seed)
 
-`python -m recon_agent events seed` publishes 97 insert events for one Saturday sales day:
+`python -m recon_agent events seed` publishes 74 insert events for sales date Saturday 12 September 2026,
+plant UBD:
 
-- 17 MIPS lines, 14 ODI runs and 6 batches;
-- 23 WMS item lines and 4 WMS orders, across 12 SKUs and 4 customers;
-- 11 receipt tickets (one per run that wrapped product), each with its WMS receipt transaction and its Oracle posting. Nothing is late or returned.
+- the item master (10 FG and 9 RM items) and the ten Oracle forecasts, as in the workbook;
+- 18 BUSS order lines, 21 ODI mapping rows, 3 WMS stock rows and 3 MIPS work orders, for three SKUs.
 
-The seed then starts the clock at 20:00 the evening before the sales day: production is wrapped and WMS is loading trailers. All values are invented. SKUs are numbered 900101–900112, and every description and customer name starts with `SIM`. The seed bypasses injected faults. Each SKU is built to show one scenario:
+The clock starts at 20:00 the evening before the sales day. The seed bypasses injected faults.
 
-| SKU | Scenario | Expected flag |
-|---|---|---|
-| 900101 | 1: inventory applied to the first of three order lines | R01 (High) |
-| 900102 | 4: recovery run over-built by 1,200 | R05 (High) |
-| 900103 | 2: inventory netted with no beginning inventory recorded | R02 |
-| 900104 | 2: zero-quantity line in a live run | R03 |
-| 900105 | 3: run moved from Line 1 to Line 2, ghost left behind | R04 |
-| 900106 | 7: WMS filled 700 units from stock MIPS cannot see | R07 (High) |
-| 900107 | 6 and 5: WMS order raised after MIPS synced, allocation short | R09, R10 |
-| 900108 | 400 surplus not carried to the next sales day | R06 |
-| 900109 | units per container 10 in MIPS, 12 in WMS | R11 |
-| 900110 | negative net order: inventory exceeds demand | R08 |
-| 900111, 900112 | clean controls (the scenarios below use them) | none |
-| plant | 8: Route 12 shipped with no trailer load scan; recovery batch mixed above schedule; BUSS pads the FG reference | R12 (High), R14, R15 |
+| SKU | Built from | Seeded state | Expected flags |
+|---|---|---|---|
+| 76108 BP WHITE HOT DOG BUNS 8P 14Z | The workbook, value for value | Reconciles: (14,339 + 41,769) − 473 − 7,000 = 48,635 = the work order | none (the control) |
+| 950513 BP BUTTER HOT DOG BUNS 8P 15Z | FC002 from the workbook; the rest invented | MIPS sized the work order to the 4,840 demand left and did not subtract 1,140 available; one extra batch mixed | R05 (High), R11 |
+| 76105 BP WHITE HAMBURGER BUNS 8P 15Z | FC004 from the workbook; the rest invented | ODI maps the Colonie order at 800, BUSS has 900; WMS on hand 1,900 against 1,800; Albany's ship date is before the wrap | R02, R10, R12 (High) |
 
-The test suite asserts that the seed raises exactly these 14 flags (`seed.EXPECTED`).
+The test suite asserts that the seed raises exactly these five flags (`seed.EXPECTED`).
 
 ## 8. Scenario library
 
-The eight requirement scenarios as scripts ([events/scenarios.py](../recon_agent/events/scenarios.py)). Each plays a short story against the starting day, mostly on the clean SKUs, so its flag visibly appears on the worklist. Steps go through the normal producer path: derived columns are recomputed, and active faults apply.
+Ten scenarios as scripts ([events/scenarios.py](../recon_agent/events/scenarios.py)), each breaking one step of
+the demand-to-delivery flow for the clean SKU 76108, so its flags visibly appear on the worklist. Steps go
+through the normal producer path, so active faults apply.
 
-| ID | Scenario | Story | Raises |
-|---|---|---|---|
-| S1 | 1 | MIPS nets 2,000 units for 900111 against the first of two lines only | R01-900111 |
-| S2 | 2 | 200 units netted for 900112 through a new zero-quantity line, scheduled as a blind run | R02-900112, R03-SU900220-900112 |
-| S3 | 3 | 900111's run moves from Line 2 to Line 1; a zero copy with no shift stays | R04-SU900210-900111 |
-| S4 | 4 | 900112 wraps 100 short; 90 plant minutes later a recovery run makes the full 900 again | R05-900112 |
-| S5 | 5 | 120 damaged units of 900111 returned to the plant against TK-0010; the ticket isn't reduced | R19-TK-0010, R07-900111 |
-| S6 | 6 | Route 12 raises 900112 from 900 to 1,100 in WMS; MIPS hasn't refreshed | R09-900112, R10-900112 |
-| S7 | 7 | 300 more 900111 filled from the freezer; MIPS plans them, the plant makes nothing extra | R07-900111 |
-| S8 | 8 | South's trailer ships; Oracle rejects one posting and never sees another; 10 plant minutes pass | R18-WT-S8A, R18-WT-S8F |
+| ID | Story | Raises |
+|---|---|---|
+| S1 | Albany raises order 2263245 from 7,200 to 7,800 in BUSS; ODI keeps 7,200 | R02-2263245-1, R04-76108, R05-76108 |
+| S2 | A new 900-unit BUSS order never reaches ODI | R01-2263260-1, R04-76108, R05-76108 |
+| S3 | Wilmington cancels its 352-unit order in BUSS; ODI keeps the line | R03-ODI-0012, R04-76108, R05-76108 |
+| S4 | WMS allocates 660 more to an order; ODI and MIPS keep the old allocation | R09-76108, R04-76108 |
+| S5 | A planner raises the work order to 50,000 in MIPS; ODI keeps 48,635 | R05-76108, R07-WO-UBD-20260912-001 |
+| S6 | A cycle count changes WMS on hand only | R10-INV-0001 |
+| S7 | Line 1 runs late: wrapping ends after six orders' ship dates | R12-WO-UBD-20260912-001 |
+| S8 | The work order is deleted in MIPS | R06-76108, R07-WO-UBD-20260912-001 |
+| S9 | An ODI reload drops the work order from Albany's 7,200-unit line | R08-ODI-0002 |
+| S10 | Chicopee's order arrives with BUSS code 2717 instead of 2771 | R13-76108 |
 
-Each scenario declares the flags it must raise (and clear). On the untouched starting day, the test suite plays every one and checks exactly that, so the library is also the regression suite for the rules. Run one from the simulator's **Scenarios** tab (optionally "Reset first", with 0, 3 or 10 s between steps), or with `events scenario run S5 [--reset]`.
+Each scenario declares the flags it must raise (and clear). On the untouched starting day, the test suite
+plays every one and checks exactly that, so the library is also the regression suite for the rules. Work-order
+numbers carry the sales date (`{date}` in a scenario key). Run one from the simulator's **Scenarios** tab, or
+with `events scenario run S5 [--reset]`.
 
 ## 9. Integration faults
 
@@ -214,28 +202,34 @@ The faults are injected between `source_changes` and `events`, where a real inte
 
 | Fault | Effect | Consumer outcome |
 |---|---|---|
-| `delay` *seconds* | The change is delivered that much later (the simulator's pump delivers it when due) | The worklist is behind until it lands, e.g. a stale WMS screen (scenario 6) |
-| `drop` | The change is never delivered (kept for *Replay dropped*) | Missing until replayed or healed by the next update to the row; a dropped Oracle posting raises R18 |
+| `delay` *seconds* | The change is delivered that much later (the simulator's pump delivers it when due) | The worklist is behind until it lands, e.g. a stale WMS screen |
+| `drop` | The change is never delivered (kept for *Replay dropped*) | Missing until replayed or healed by the next update to the row; a dropped BUSS order raises nothing until it arrives |
 | `duplicate` *seconds* | A second copy is delivered later | Ignored (same `event_id`) |
 | `reorder` *batch* | Changes are held until a batch is full, then delivered newest first | Older images are ignored (`source_seq`) |
 
-A fault can be scoped to a system and/or entity, and limited to a number of changes. The simulator's **Integration** tab has presets (stale WMS feed, lose the next Oracle posting, at-least-once delivery, out-of-order delivery), a custom form, *Deliver waiting now*, *Replay dropped* and *Remove all faults*. The CLI equivalents are `events fault add delay --source WMS --seconds 60`, `events fault list|remove --id N|clear` and `events deliver [--now] [--replay-dropped]`. Reset clears all faults.
+A fault can be scoped to a system and/or entity, and limited to a number of changes. The simulator's **Integration** tab has presets (stale WMS feed, lose the next BUSS order, at-least-once delivery, out-of-order delivery), a custom form, *Deliver waiting now*, *Replay dropped* and *Remove all faults*. The CLI equivalents are `events fault add delay --source WMS --seconds 60`, `events fault list|remove --id N|clear` and `events deliver [--now] [--replay-dropped]`. Reset clears all faults.
 
 ## 10. Write-back (corrections)
 
 This closes the product's Phase 2 loop in the POC: **Flagged → Proposed → Approved → Sent → Confirmed**, with **Failed → Retry** and **Cancelled**. See [recon_agent/corrections.py](../recon_agent/corrections.py).
 
-**1. Proposed.** In event mode, a flag whose fix is one clear row change shows a *Proposed correction* on the worklist, computed from the rows the worklist currently sees:
+**1. Proposed.** In event mode, a flag whose fix is clear shows a *Proposed correction* on the worklist,
+computed from the rows the worklist currently sees:
 
 | Rule | Correction |
 |---|---|
-| R09 | MIPS follows WMS: the SKU's largest sales-order line takes the difference |
-| R13 | Rebuild the most-mismatched WMS order header from its item lines |
-| R16 | Re-send the MIPS sales-order quantity to the SKU's first ODI run |
-| R18 | Resubmit the Oracle posting (repost an ERROR, or insert the missing one) |
-| R19 | Book the returned quantity on the WMS ticket |
+| R01 | Insert the missing ODI mapping row, on the SKU's work order |
+| R02 | Set the ODI row's quantity to the BUSS order or Oracle forecast |
+| R03 | Delete the ODI row whose order or forecast no longer exists |
+| R04 | Set the MIPS `Forecast / Order Quantity` to the demand left (one work order only) |
+| R05 | Set the MIPS `Work Order Quantity` to the shortfall (one work order only) |
+| R06 | Create the MIPS work order for the shortfall, under the number ODI still maps if there is one |
+| R07 | Set `Work Order Quantity` on every ODI row of the work order to the MIPS quantity (one transaction) |
+| R08 | Link the uncovered ODI row to the SKU's work order |
 
-There are deliberately no automatic corrections where the fix needs a fact only a person can establish: R02 (where netted inventory physically is; recording it blindly could hide a real shortfall), R05/R06 (which day takes a surplus), R07 (which freezer lot was used), R10 and R11.
+There are deliberately no automatic corrections where the fix needs a fact only a person can establish: R09
+(which order holds the stock), R10 (which WMS figure the count proves wrong), R11 (why the plant mixed more),
+R12 (move the run or the ship date), R13 (which code is right), and R04/R05 when a SKU has several work orders.
 
 **2. Approved.** Only a planner or manager can approve. Approving also accepts the flag.
 
@@ -245,26 +239,26 @@ There are deliberately no automatic corrections where the fix needs a fact only 
 
 **Failed and Retry.** A failed correction can be retried; it is recomputed from what the worklist shows then. If no correction applies any more, it becomes **Cancelled**.
 
-Every correction keeps its ID, before and after values and status history in `corrections.json`, next to the event log, and is available at `GET /api/corrections[/{id}]`. A correction can cascade. For example, R09's fix raises the MIPS sales orders, which can then raise R16 (ODI's copy is behind) and R02.
+Every correction keeps its ID, before and after values and status history in `corrections.json`, next to the event log, and is available at `GET /api/corrections[/{id}]`. Corrections follow the flow. For example, after S1: R02 fixes ODI, R04 then fixes the MIPS demand, R05 the work order, and the new work-order quantity raises R07 until it is re-sent to every ODI row.
 
 ## 11. Running it
 
 ```bash
-python -m recon_agent events seed --reset                     # fresh synthetic day
+python -m recon_agent events seed --reset                     # fresh starting day (3 SKUs, 5 flags)
 RECON_SOURCE=events python -m recon_agent serve               # System A: worklist (:8000)
 python -m recon_agent simulate                                # System B: simulator (:8100)
 
-python -m recon_agent events scenario run S8                  # or use the simulator's Scenarios tab
+python -m recon_agent events scenario run S1                  # or use the simulator's Scenarios tab
 python -m recon_agent events fault add delay --source WMS --seconds 60
-python -m recon_agent events set wms.item_order WL-0015 "Order Qty=800" --note "Route 27 back to original"
+python -m recon_agent events set buss.sales_order 2263245-1 "Order Quantity=7800" --note "Albany raised its order"
 python -m recon_agent events clock --rate 60                  # 1 real second = 1 plant minute
 python -m recon_agent events status
 ```
 
 On PowerShell, set `$env:RECON_SOURCE="events"` first. Write-back needs the simulator running at `RECON_CORRECTIONS_URL`. The simulator's delivery pump is what delivers delayed changes, so keep it running when faults are active (CLI commands also deliver what is due when they run).
 
-**Simulator:** sign in with a worklist account (username and password; set `RECON_CORRECTIONS_TOKEN` before sharing the URL). Synthetic data only; never run it next to a production worklist. It has:
-- **Tables:** one tab per entity, showing source truth, with an editor whose derived columns are recomputed as the source system would ([events/derive.py](../recon_agent/events/derive.py)).
+**Simulator:** sign in with a worklist account (username and password; set `RECON_CORRECTIONS_TOKEN` before sharing the URL). Dummy data only; never run it next to a production worklist. It has:
+- **Tables:** one tab per entity, showing source truth, with an editor. No column is derived in v3 ([events/derive.py](../recon_agent/events/derive.py)).
 - **Source changes:** each change's column diff and its delivery state (event #, delayed, held, dropped, duplicate copy, on worklist).
 - **Clock controls** and **worklist lag and latency**.
 - **Scenarios** and **Integration** tabs.
@@ -279,10 +273,10 @@ On PowerShell, set `$env:RECON_SOURCE="events"` first. Write-back needs the simu
 
 **Files:** event mode keeps its log, `corrections.json`, decisions and reports in `output/sim/`. Simulated decisions never change the rule confidence learned from real data.
 
-**Tests:** `python -m unittest discover -s tests -v` (49 tests). Each test module isolates itself: no model calls, and no real decisions file.
+**Tests:** `python -m unittest discover -s tests -v` (106 tests). Each test module isolates itself: no model calls, and no real decisions file.
 
 ## 12. Later
 
 - **Kafka-compatible log** (Phase 6): OCI Streaming replaces SQLite behind the same publish/read interface, and real connectors replace the simulator one system at a time.
 - **Automatic write-back** for rules at ≥98% acceptance over 8 weeks (product Phase 2), enabled by the productivity manager.
-- **Freezer lots** (`wms.freezer_lot`), so R07 can name the lot used.
+- **Raw materials**: a bill of materials and RM stock and inbound in WMS, for the workbook's "if FG is not available, check components, then inbound RM" step.

@@ -4,7 +4,7 @@ Rows are SKUs with their flags nested; plant-level flags (no SKU) are rows of
 their own. Every change bumps `version`, so an open screen can tell it is
 behind instead of silently showing a different number than the next one.
 
-The data comes from a feed (sources.py): the Excel extracts, or the event log
+The data comes from a feed (sources.py): the source workbook, or the event log
 with its simulated clock. Times in the store (claims, acknowledgments, SLAs)
 follow the feed's clock.
 """
@@ -15,7 +15,6 @@ import json
 import re
 import threading
 import time
-from collections import Counter
 from dataclasses import dataclass, field
 
 from .. import ai, config, corrections, engine, feedback, sources
@@ -96,7 +95,7 @@ class Store:
     changes: list[Change] = field(default_factory=list)
     claims: dict[str, dict] = field(default_factory=dict)
     acks: dict[str, dict] = field(default_factory=dict)
-    # Hand-off notes per row ("checked WMS, waiting on the freezer count"), newest last. Like claims
+    # Hand-off notes per row ("checked WMS, waiting on the locator count"), newest last. Like claims
     # they live in memory: they are for the next shift, not a record of the decision.
     notes: dict[str, list[dict]] = field(default_factory=dict)
     briefing_read: dict[str, str] = field(default_factory=dict)   # user -> briefing id they marked read
@@ -156,9 +155,8 @@ class Store:
             rows = {}
             for key, flags in grouped.items():
                 p = self.res.positions.get(flags[0].sku) if flags[0].sku else None
-                dates = Counter(l.schedule_date for l in p.lines) if p and p.lines else None
                 rows[key] = Row(key=key, sku=flags[0].sku, description=flags[0].description,
-                                sales_date=dates.most_common(1)[0][0] if dates else self.sales_date,
+                                sales_date=p.sales_date if p and p.sales_date else self.sales_date,
                                 flags=sorted(flags, key=lambda f: f.priority, reverse=True),
                                 position=p, claim=self.claims.get(key))
             self.rows = rows
@@ -234,7 +232,7 @@ class Store:
                 self.book.update(c["id"], "Cancelled", user, self.now(), "no correction applies any more")
                 return row, "No correction applies any more."
             self.book.update(c["id"], "Approved", user, self.now(), "retried", expected=p.expected,
-                             changes=p.changes, summary=p.summary, key=p.key, op=p.op, error="")
+                             changes=p.changes, summary=p.summary, key=p.key, op=p.op, rows=p.rows, error="")
         return row, self._send(c, row.key, user)
 
     # --- AI narration ----------------------------------------------------
@@ -344,7 +342,7 @@ class Store:
                 return
             try:
                 self.load()
-            except Exception as e:  # a missing or half-copied extract must not take the worklist down
+            except Exception as e:  # a missing or half-copied workbook must not take the worklist down
                 self.position = position   # try again when the source moves again
                 print(f"Reload failed ({e}) - the worklist keeps the {self.sales_date} data.")
 
@@ -398,7 +396,7 @@ class Store:
         by_day: dict[dt.date, float] = {}
         for r in self.rows.values():
             if r.carry_accepted and r.position:
-                surplus = max(0.0, -r.position.net_requirement)
+                surplus = r.position.stock_surplus
                 by_day[next_sales_day(r.sales_date)] = by_day.get(next_sales_day(r.sales_date), 0.0) + surplus
         return [{"date": d, "units": u} for d, u in sorted(by_day.items()) if u]
 
@@ -508,31 +506,38 @@ def day_tag(d: dt.date) -> dict:
 
 
 def ledger(row: Row) -> dict | None:
-    """Reconciled position laid out on one shared scale, for the SKU detail."""
+    """The demand-to-delivery equation for the SKU detail, on one shared scale.
+
+    The bar draws supply against demand: allocated and available WMS stock, then the MIPS work
+    order, against the total demand mark. What the work order makes beyond the shortfall shows
+    past the mark (over-production); what it leaves uncovered shows short of it."""
     p = row.position
-    if not p or not (p.lines or p.runs):
+    if not p or not (p.orders or p.forecasts or p.work_orders or p.stock):
         return None
-    demand, inventory, wrapped = p.demand_total, p.implied_inventory, p.wrapped
-    supply = inventory + wrapped
-    systems = [("MIPS", "Demand, all lines", demand), ("MIPS", "Inventory applied", inventory),
-               ("ODI", "Ordered", p.net_ordered), ("ODI", "Wrapped", wrapped),
-               ("WMS", "Ordered", p.wms_order_qty), ("WMS", "Allocated", p.wms_allocated)]
-    scale = max([supply, demand] + [v for *_, v in systems]) or 1.0
+    demand = p.demand
+    alloc = min(p.allocated, demand)
+    avail = min(p.available, max(demand - alloc, 0.0))
+    wo_in = min(p.wo_qty, max(demand - alloc - avail, 0.0))
+    over, short = max(0.0, p.balance), max(0.0, -p.balance)
+    systems = [("BUSS", "Sales orders", p.so_qty), ("Oracle", "Forecast", p.forecast_qty),
+               ("ODI", "Demand mapped", p.odi_demand), ("WMS", "Allocated", p.allocated),
+               ("WMS", "Available", p.available), ("MIPS", "Demand planned", p.mips_demand),
+               ("MIPS", "Work order", p.wo_qty)]
+    scale = max([demand, p.planned_supply] + [v for *_, v in systems]) or 1.0
 
     def pct(x: float) -> float:
         return round(100 * x / scale, 2)
 
-    # The bar draws the equation: returned units are not usable, so surplus and short are the net.
-    inv_in = min(inventory, demand)
-    wrap_in = min(max(wrapped - p.returns, 0.0), demand - inv_in)
-    surplus, short = max(0.0, -p.net_requirement), max(0.0, p.net_requirement)
     return {
-        "demand": demand, "inventory": inventory, "wrapped": wrapped, "net": p.net_requirement,
-        "returns": p.returns, "demand_at_order": p.demand_at_order, "after_order": p.demand_after_order,
-        "surplus": surplus, "short": short, "lines": len(p.lines),
-        "sales_orders": p.demand_sales_orders, "supply_plan": p.demand_supply_plan, "moved": p.demand_moved,
-        "pct": {"demand": pct(demand), "inv": pct(inv_in), "wrap": pct(wrap_in), "surplus": pct(surplus),
-                "short": pct(short)},
+        "so": p.so_qty, "forecast": p.forecast_qty, "demand": demand, "allocated": p.allocated,
+        "demand_left": p.demand_left, "available": p.available, "shortfall": p.shortfall,
+        "surplus_stock": p.stock_surplus, "mips_demand": p.mips_demand, "wo": p.wo_qty,
+        "work_orders": p.wo_numbers, "odi_wo": p.odi_wo_qty, "odi_demand": p.odi_demand,
+        "odi_allocated": p.odi_allocated, "balance": p.balance, "over": over, "short": short,
+        "orders": len(p.orders), "forecasts": [f.forecast_id for f in p.forecasts],
+        "mips_ok": abs(p.mips_demand - p.demand_left) < 0.5, "wo_ok": abs(p.wo_qty - p.shortfall) < 0.5,
+        "pct": {"demand": pct(demand), "alloc": pct(alloc), "avail": pct(avail), "wo": pct(wo_in),
+                "over": pct(over), "short": pct(short)},
         "systems": [{"system": s, "label": l, "value": v, "pct": pct(v)} for s, l, v in systems],
         "next_day": next_sales_day(row.sales_date),
     }

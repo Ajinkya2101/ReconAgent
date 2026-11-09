@@ -47,9 +47,6 @@
       <button class="btn btn--primary" type="submit">{% if mode == "edit" %}Publish change{% else %}Insert row{% endif %}</button>
       {% if mode == "edit" %}
       <button type="button" class="btn" hx-get="/t/{{ e.name }}/new?clone={{ key|urlencode }}">Copy as new row</button>
-      {% if e.name == "wms.order" %}
-      <button type="button" class="btn" hx-post="/t/wms.order/recalc/{{ key|urlencode }}" title="Set Order Qty and Allocated Qty to the sum of this customer's item lines">Rebuild totals from item lines</button>
-      {% endif %}
       <button type="button" class="btn btn--danger" hx-post="/t/{{ e.name }}/delete/{{ key|urlencode }}" hx-include="closest form" hx-confirm="Delete {{ key }}? This publishes a delete event.">Delete</button>
       {% endif %}
     </div>

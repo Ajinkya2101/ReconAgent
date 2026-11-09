@@ -1,5 +1,7 @@
 # Code Review — Reconciliation Agent
 
+> **Superseded.** This review covers the v2 data model (the five client extracts). The agent now uses the business team's 9 Nov mapping: see [DATA_MODEL_9NOV.md](DATA_MODEL_9NOV.md).
+
 **Scope:** the full working tree (`recon_agent/`, `tests/`, Docker/Compose/Caddy, CI), checked against the
 specification in `ReconAgent.txt`. Method and checklist: [CODE_REVIEW_PROMPT.md](CODE_REVIEW_PROMPT.md).
 **Test run:** `RECON_AI=off python -m unittest discover -s tests` → **112 tests, all pass** (≈23 s).

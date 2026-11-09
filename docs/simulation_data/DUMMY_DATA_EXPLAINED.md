@@ -1,5 +1,7 @@
 # Simulation Dummy Data, Explained
 
+> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL_9NOV.md](../DATA_MODEL_9NOV.md) and [EVENT_CONTRACT.md](../EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
+
 What the synthetic dataset contains, which columns link the tables, and what happens in the other systems when one system's data changes.
 
 All the dummy data describes **one invented sales day (Sat 7 Nov 2026)** at the UBD (Lehigh Valley) bakery: 12 SKUs (`900101`–`900112`) and 4 customers, spread across 8 tables. Every description and customer name starts with `SIM`.

@@ -24,7 +24,7 @@
         {{ tag(r.sales_date, "tag--xs") }} {{ sku_label(r) }} {{ r.description }}
       </a>
       <p>{{ severity(r.severity) }} {{ r.top.title }}: {{ r.top.units|abs|num }} units, {{ money_or_dash(r.dollars) }}{% if r.flags|length > 1 %}; {{ r.flags|length }} flags on this {{ "SKU" if r.sku else "row" }}{% endif %}.</p>
-      {% if L %}<p class="answer-ledger">Demand {{ L.demand|num }} − inventory {{ L.inventory|num }} − wrapped {{ L.wrapped|num }} = {% if L.net < 0 %}surplus {{ L.net|abs|num }}{% else %}{{ L.net|num }} still to produce{% endif %}.</p>{% endif %}
+      {% if L %}<p class="answer-ledger">Demand {{ L.demand|num }} − allocated {{ L.allocated|num }} − available {{ L.available|num }} = shortfall {{ L.shortfall|num }}; work order {{ L.wo|num }}.</p>{% endif %}
     </li>
     {% endfor %}
   </ul>

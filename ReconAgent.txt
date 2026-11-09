@@ -1,10 +1,12 @@
-3 systems: 
-MIPS - Plans prod, holds customer orders and prod schedule
-ODI - Records prod, holds quantity that each prod run made
-WMS - Controls warehouse, holds customer orders, stock allocations and shipments 
+5 systems (the business team's 9 Nov mapping, docs/DATA_MODEL_9NOV.md):
+BUSS - Holds customer sales orders
+Oracle - Holds the item master and the planning forecast
+MIPS - Plans production: the demand left after allocated stock, and the work order for the shortfall
+ODI - Joins each order line and forecast to its work order and MIPS batches
+WMS - Holds all on-hand stock: available and allocated
 
-These 3 systems frequently show diff quantities for the same prod, today people manually compare screens between MIPS and WMS. 
-Slow process, requires domain expertise and human intervention. 
+These systems frequently show different quantities for the same product. Today people compare screens by hand.
+Slow process, requires domain expertise and human intervention.
 
 ---------------------------------------------------------------
 
@@ -17,10 +19,10 @@ When 3 systems out of sync, problems:
 ---------------------------------------------------------------
 
 Reconciliation Agent, Solution:
-Compares data from three systems for each product (SKU) and each sales day. 
+Compares data from the five systems for each product (SKU) and each sales day. 
 Steps:
 1. Calculate one current position for each SKU
-2. 17 fixed rules to find mismatch between systems
+2. 13 fixed rules, one for each step of the demand-to-delivery flow
 3. Flags each mismatch, flag tells you the problem, system that is wrong or out of sync and the correction. 
 4. Puts the flags in sequence. Flag with largest retail value at risk is first priority
 5. Records each planner decision, uses decisions to change the sequence of subsequent flags
@@ -30,63 +32,44 @@ Steps:
 Main principles
 - Rules calculate, AI explains 
 Rules calculate each quantity, AI explains the 
-- Agent adds all demand before it applies inventory, all MIPS order lines get added for a SKU first only then agent applies inventory. Prevents over-production.
-- Agent gives corrections, not just differences. For example: "Apply the 1,200 units to the active sales-order lines and decrease the production requirement to 800."
+- Agent adds all demand (every BUSS order line and the Oracle forecast) before it applies stock. Prevents over-production.
+- Agent gives corrections, not just differences. For example: "Cut work order WO-UBD-20260912-002 to 3,700: WMS already has 1,140 available."
 - Business person makes the final decision, phase 1 only proposes changes with accept or reject options.
 
 ---------------------------------------------------------------
 
 Problem Identification:
 Step 1: Input data
-Agent reads data from 5 sources each sales day; MIPS Order Data, ODI Finished Goods Data, ODI Batch Data, WMS Fill Rate Report, WMS Order Summary Report by Item. 
+Agent reads one workbook (or the live event feed) with one sheet per source: ITEM Master, Sales Orders (BUSS), Oracle Planning & Forecast, ODI Batch Data Entry Mapping, WMS and MIPS.
 
 Step 2: Reconciled Position
-Agent uses this equation;
-Net requirement = Total demand (all MIPS lines)
-                − Inventory applied
-                − Completed production (wrapped units, all runs)
-                + Returns and adjustments
-- A positive net requirement is the quantity that the plant must still make.
-- A negative net requirement is a surplus. You must carry it forward to the next sales day.
+Agent uses the business team's equation:
+Total demand   = Sales orders (BUSS, all lines) + Forecast (Oracle)
+Demand left    = Total demand - Allocated stock (WMS)       -> MIPS Forecast / Order Quantity
+Shortfall      = Demand left - Available stock (WMS)        -> MIPS Work Order Quantity
+Check          = Work order + Available + Allocated = Total demand
+- Example, 76108: (14,339 + 41,769) - 473 - 7,000 = 48,635.
+- When available stock covers the demand left, the shortfall is 0 and no work order is needed. The surplus stays in WMS (all on-hand stock is kept in WMS only).
+- An item with only a forecast is planning, not yet scheduled: it gets no position.
 
 Step 3: Rules
-R01(H) - MIPS applied the inventory to the first order line only. The other lines can cause over-production.
+R01(H) - A BUSS order line or Oracle forecast is missing from the ODI mapping.
+R02(M) - The ODI quantity differs from the BUSS order or Oracle forecast.
+R03(M) - ODI maps an order or forecast that no longer exists (cancelled).
+R04(M) - The MIPS Forecast / Order Quantity is not the demand less allocated stock.
+R05(H) - The MIPS work order is not sized to the shortfall (over- or under-production).
+R06(H) - A shortfall has no MIPS work order.
+R07(M) - The ODI work order (number or quantity) differs from MIPS.
+R08(M) - A demand line has neither allocated stock nor a work order.
+R09(M) - The allocated stock differs between WMS and ODI.
+R10(M) - WMS on hand is not available plus allocated.
+R11(L) - The batches mixed differ from the MIPS schedule.
+R12(H) - Finished goods were wrapped after the requested ship date.
+R13(L) - Item or BUSS codes differ between the item master, BUSS, MIPS and ODI.
 
-R02(M) - MIPS subtracted inventory, but it did not record the inventory. Nobody can trace it.
+Quantity rules change severity with size: High at 1,000 units or more, otherwise Medium.
 
-R03(L) - A production line has zero quantity and zero output (a "blind" line).
-
-R04(M) - A production run moved to a different line. A zero-quantity copy stays on the old line.
-
-R05(H) - A recovery run made more than the remaining demand.
-
-R06(M) - Surplus production did not move to the next demand.
-
-R07(H) - WMS shipped stock that MIPS cannot see (for example, freezer stock).
-
-R08(M) - Inventory is more than demand. The net order is negative.
-
-R09(M) - The MIPS order quantity and the WMS order quantity are different.
-
-R10(M) - WMS allocated less than the order quantity.
-
-R11(M) - MIPS and WMS use different units per container for the same SKU.
-
-R12(H) - WMS shows orders as shipped, but no trailer load scan occurred.
-
-R13(M) - Two WMS reports show different totals.
-
-R14(L) - The batches mixed are different from the MIPS schedule.
-
-R15(L) - The SKU number has a different format in one source system (for example, extra spaces).
-
-R16(M) - The ODI copy of the MIPS order quantity is different from MIPS.
-
-R17(M) - A value is very different from the plant median. It can be a data-entry error.
-
-Some rules change the severity for large quantities. For example, R05 is High at 1,000 units or more, and Medium below 1,000 units.
-
-NOTE: Two more rules (R18 and R19) are in the plan. R18 finds WMS transactions that do not get to Oracle in 10 minutes. R19 finds returns that do not decrease the received quantity. These rules need real-time data. Thus, they are not in the current version.
+NOTE: The workbook also describes raw-material checks (if FG is not available, check components, then inbound RM). They need a bill of materials and RM stock, which the workbook does not have yet.
 
 Step 4: Priority
 The agent puts the flags in sequence by priority. The flag with the highest priority is first.
@@ -112,11 +95,11 @@ The label above each explanation tells you the source. If the AI model is not av
 
 System accountability
 Each flag also shows which system caused the problem. The rules calculate this, not the AI. Thus, it is always available, and the AI cannot change it.
-- Impact: over-production, under-production, stranded surplus, short shipment, overstated inventory, traceability gap, financial posting gap or data integrity.
-- Started in: the system where the error started (MIPS, ODI, WMS or Oracle), or Integration when the connection between two systems failed.
+- Impact: over-production, under-production, short shipment, overstated inventory, traceability gap or data integrity.
+- Started in: the system where the error started (BUSS, Oracle, MIPS, ODI or WMS), or Integration when the connection between two systems failed.
 - Failure: how the system went wrong (for example, planning change, stale data, missing transaction).
 - Attribution: Certain, Likely or Undetermined.
-- One line for each system (MIPS, ODI, WMS, and Oracle if it is involved) with its role: Misfired, Affected, Reference, Conflicting, To check or Not involved.
+- One line for each system (MIPS, ODI, WMS, and BUSS or Oracle if involved) with its role: Misfired, Affected, Reference, Conflicting, To check or Not involved.
 
 AI checks and audit
 - The agent compares each number in the AI text with the numbers of the rules. If the AI writes a number that the rules did not calculate, the flag shows "not in the engine's data". Do not use that number.
@@ -164,7 +147,7 @@ To show a specified group of rows:
 
 To find a SKU or an item:
 - Push the / key, or push the search box.
-- Type the SKU number or a part of the item name (for example, 150080 or brioche).
+- Type the SKU number or a part of the item name (for example, 76108 or hamburger).
 Result: The queue shows only the rows that match.
 
 To move in the queue with the keyboard:
@@ -178,14 +161,13 @@ To move in the queue with the keyboard:
 Result: The detail area shows the row.
 
 - Read the Reconciled position equation:
-	- Demand, all MIPS lines.
-	- Minus inventory applied.
-	- Minus completed production.
-	- Plus returns and adjustments.
-	- Equals the quantity to make, or the surplus to carry forward.
+	- Sales orders (BUSS) plus forecast (Oracle) equals total demand.
+	- Minus allocated stock (WMS) equals the demand left. The line shows whether MIPS plans the same quantity.
+	- Minus available stock (WMS) equals the shortfall. The line shows whether the MIPS work order is the same quantity.
+	- The check: work order plus available plus allocated against demand.
 
-- Read the bar. It shows inventory (grey), wrapped units, and the demand mark on one scale. A surplus shows after the demand mark. A shortage shows before it.
-- Read the systems table. It shows the MIPS, ODI and WMS quantities on the same scale.
+- Read the bar. It shows allocated and available stock (grey), the work order (black) and the demand mark on one scale. Over-production shows after the demand mark. A shortage shows before it.
+- Read the systems table. It shows the BUSS, Oracle, ODI, WMS and MIPS quantities on the same scale.
 - Read each flag in the Flags area. Each flag shows:
 	- The severity, the rule code and the title.
 	- The units and the dollar value.
@@ -195,7 +177,7 @@ Result: The detail area shows the row.
 	- For an AI explanation: How it happened, Confirm with, the check of the numbers and the Audit number.
 	- The evidence values.
 - To see the original records, push Source records.
-Result: The screen shows the MIPS schedule lines, the ODI production runs and the WMS customer orders for this SKU.
+Result: The screen shows the BUSS order lines, the Oracle forecast, the ODI mapping rows, the WMS stock and the MIPS work orders for this SKU.
 
 5 - Claim a row
 Claim a row to tell other supervisors that you work on it.
@@ -238,18 +220,12 @@ To change a decision:
 	- Push Change decision below the flag.
 	- Push Reject instead or Accept instead.
 
-8 - Carry surplus forward
-Rules R05, R06 and R08 find surplus units. When you accept one of these flags, the agent shows the carry-forward:
- - Accept the flag. Refer to Section 7.
-Result: The flag shows "Carry N units (today's tag) → (next sales day tag)". The bar color changes to the tag of the next sales day. The sales-day filter shows a tile for the next sales day with "carried in · awaiting MIPS correction".
-
-- In MIPS, add the surplus units as beginning inventory for the next sales day.
-- In MIPS, decrease the production requirement for the next sales day by the same quantity.
-NOTE: The current sales-day calendar (Monday to Saturday) is provisional. The plant must confirm it.
+8 - Surplus stock
+When WMS has more stock available than the demand left, no work order is needed and the surplus stays in WMS (all on-hand stock is kept in WMS only). Rule R05 then asks to cancel or cut the work order. No surplus is carried to another sales day.
 
 9 - Ask the assistant a question
 - Push Ask in the top strip.
-- Type your question in the box. Use 500 characters or less. For example: Why is MIPS asking for more 150080?
+- Type your question in the box. Use 500 characters or less. For example: Why is the 950513 work order bigger than the shortfall?
 - Push Ask.
 Result: The answer shows below the box. The answer gives links to the related rows.
 - To open a row from the answer, push the link.

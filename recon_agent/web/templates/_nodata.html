@@ -4,10 +4,10 @@
 {% if not checked_skus %}
 <p><b>Waiting for the first data.</b>
   {% if live %}The feed is at event #{{ store.feed.seq }}. Rows appear here as MIPS, ODI and WMS publish.
-  {% else %}No MIPS, ODI or WMS extract rows are loaded yet. Rows appear here when the next extracts load.{% endif %}
+  {% else %}No BUSS, Oracle, MIPS, ODI or WMS rows are loaded yet. Rows appear here when the source workbook loads.{% endif %}
   Nothing has been reconciled, so this is not an all-clear.</p>
 {% else %}
 <p><b>Every SKU reconciles{% if day %} for this sales day{% endif %}.</b>
   {{ checked_skus }} {{ "SKU was" if checked_skus == 1 else "SKUs were" }} checked across MIPS, ODI and WMS
-  {% if live %}in the live feed, event #{{ store.feed.seq }} at {{ store.loaded_at|hm }}{% else %}in the extracts loaded at {{ store.loaded_at|hm }}{% endif %}.</p>
+  {% if live %}in the live feed, event #{{ store.feed.seq }} at {{ store.loaded_at|hm }}{% else %}in the workbook loaded at {{ store.loaded_at|hm }}{% endif %}.</p>
 {% endif %}

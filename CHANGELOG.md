@@ -6,6 +6,27 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+### Changed: data model v3 (the business team's 9 Nov mapping)
+The agent no longer replicates the five client extracts. It uses the business team's demand-to-delivery
+mapping (`BIMBO_MIPS_WMS_ODI_Data_9th_NOV.xlsx`; see [docs/DATA_MODEL_9NOV.md](docs/DATA_MODEL_9NOV.md)).
+- **Sources and contract v3.** Six entities, one per workbook sheet: `oracle.item`, `buss.sales_order`,
+  `oracle.forecast`, `odi.batch_mapping`, `wms.inventory` and `mips.work_order`. BUSS is now a source system
+  of its own. The Excel feed reads the one workbook from anywhere under `data/`. An event log written under
+  contract v2 is recreated empty on first start: publish the seed again.
+- **Reconciled position.** `Work Order Qty = (Sales Orders + Forecast) − Allocated − Available`. For 76108
+  that is (14,339 + 41,769) − 473 − 7,000 = 48,635, as in the business team's worked example.
+- **Rules.** 13 rules, one per step of the flow (R01–R13), replace the 19 v2 rules. The statistical outlier
+  check (old R17) is removed. Accountability lists BUSS and Oracle when a rule involves them.
+- **Dummy data.** Three SKUs. 76108 is the workbook's example and reconciles. 950513 and 76105 carry five
+  designed flags. Ten scenarios (S1–S10) each break one step for 76108.
+- **Write-back.** Proposals for R01–R08. A correction can update several rows in one transaction (R07: every
+  ODI row of a work order) or delete a row (R03). The simulator's `/oic/corrections` accepts `rows` and `op: "D"`.
+- **Worklist.** The detail draws the new equation and bar (allocated, available, work order against demand),
+  checks the MIPS demand and work order against it, and lists BUSS, Oracle, ODI, WMS and MIPS source records.
+  Carry-forward is off: surplus stays in WMS.
+- **Removed:** `anomaly.py`, the WMS order-totals rebuild in the simulator, and the v2 tests
+  (`test_consistency.py`, `test_client_alignment.py`). 106 tests pass.
+
 ### Changed (alignment with the client requirement brief and extracts)
 - **Valid demand only.** MIPS lines marked `Closed` are no longer counted as demand. They stay on
   the position as `closed_lines` (workbook column "Closed Lines (excluded)"). On the event feed,

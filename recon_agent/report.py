@@ -14,19 +14,16 @@ from openpyxl.utils import get_column_letter
 from . import accountability, feedback
 from .detectors import RULES
 from .engine import RunResult
-from .position import propose_allocation
 
 CHALLENGE_AREAS = [
-    ("System Landscape", "Single reconciled SKU position across MIPS, ODI/Oracle and WMS"),
-    ("Inventory Allocation", "SKU-level consolidation, recovery-run sizing, carry-forward proposal"),
-    ("Inventory Synchronization", "Untraceable inventory netting, moved runs, negative net orders"),
-    ("Freezer Inventory Management", "Detects demand filled from stock MIPS cannot see"),
-    ("Order-to-Batch Traceability", "Blind lines and batch-vs-schedule variances"),
-    ("Production Visibility", "MIPS-vs-WMS order drift and statistical outliers"),
-    ("Returns & Adjustments", "Hook in net requirement; needs WMS returns-to-plant / ticket feed"),
-    ("Data Flow Transparency", "Data lineage sheet, key hygiene, master-data conflicts"),
-    ("Warehouse Traceability", "Load-scan gaps and short allocations"),
-    ("Integration Architecture", "Cross-report and interface total checks"),
+    ("System Landscape", "One reconciled SKU position across BUSS, Oracle, MIPS, ODI and WMS"),
+    ("Inventory Allocation", "Demand less allocated stock in MIPS; work order sized to the shortfall"),
+    ("Inventory Synchronization", "Allocated stock agrees between WMS and ODI"),
+    ("Order-to-Batch Traceability", "Every demand line on a work order or allocated; batches against schedule"),
+    ("Production Visibility", "Shortfalls with no work order; finished goods wrapped after the ship date"),
+    ("Warehouse Traceability", "WMS on hand equals available plus allocated"),
+    ("Data Flow Transparency", "Item and BUSS codes agree with the Oracle item master"),
+    ("Integration Architecture", "Every BUSS order and Oracle forecast reaches ODI unchanged"),
 ]
 
 HEADER_FILL = PatternFill("solid", fgColor="1F3A5F")
@@ -71,10 +68,12 @@ def write_workbook(res: RunResult, path: Path) -> Path:
     ws.append([])
     for label, key in [("SKUs reconciled", "skus_reconciled"), ("SKUs fully reconciled", "skus_clean"),
                        ("Exceptions", "findings"), ("$ exposure (retail)", "dollar_exposure"),
-                       ("Over-production risk (units)", "overproduction_risk_units"),
-                       ("Surplus to carry forward (units)", "carryover_units"),
-                       ("Shipped from untracked stock (units)", "untracked_supply_units"),
-                       ("MIPS vs WMS order drift (units)", "order_mismatch_units")]:
+                       ("Total demand (units)", "total_demand_units"),
+                       ("Shortfall to produce (units)", "total_shortfall_units"),
+                       ("Work orders planned (units)", "total_work_order_units"),
+                       ("Over-production (units)", "overproduction_units"),
+                       ("Under-production (units)", "underproduction_units"),
+                       ("Demand missing from ODI (units)", "demand_not_in_odi_units")]:
         ws.append([label, k[key]])
     ws.append([])
     ws.append(["Shift briefing"])
@@ -142,14 +141,8 @@ def write_workbook(res: RunResult, path: Path) -> Path:
     for f in res.findings:
         ids_by_sku.setdefault(f.sku, []).append(f.rule)
     pos_rows = [{**p.to_row(), "Exceptions": ", ".join(sorted(set(ids_by_sku.get(p.sku, [])))) or "Reconciled"}
-                for p in sorted(res.positions.values(), key=lambda p: -p.demand_total)]
+                for p in sorted(res.positions.values(), key=lambda p: -p.demand)]
     _sheet(wb, "SKU Positions", pos_rows, widths={"Description": 36})
-
-    alloc_rows = []
-    for p in sorted(res.positions.values(), key=lambda p: p.sku):
-        if len(p.lines) > 1 or p.implied_inventory or p.net_requirement < 0:
-            alloc_rows.extend(propose_allocation(p))
-    _sheet(wb, "Allocation Proposal", alloc_rows, widths={"Description": 36})
 
     state = feedback.load()
     counts = Counter(f.rule for f in res.findings)
@@ -160,21 +153,23 @@ def write_workbook(res: RunResult, path: Path) -> Path:
         for code, (t, s, a, sev) in RULES.items()], widths={"Exception": 44, "Requirement Scenario": 40})
 
     src = res.src
-    matched = sum(1 for p in res.positions.values() if p.lines and p.runs and p.wms)
+    complete = sum(1 for p in res.positions.values() if p.orders and p.odi and p.stock and p.work_orders)
     _sheet(wb, "Data Lineage", [
-        {"System": "MIPS", "Extract": src.files["mips_orders"], "Records": len(src.mips),
-         "Grain": "Schedule line (SKU x source x sales date)", "Join Key": "FG Oracle Ref (trimmed)"},
-        {"System": "ODI / Oracle", "Extract": src.files["odi_finished_goods"], "Records": len(src.fg_runs),
-         "Grain": "Run x SKU", "Join Key": "OracleFGNumber; OracleTypeCode to batches"},
-        {"System": "ODI / Oracle", "Extract": src.files["odi_batches"], "Records": len(src.batches),
-         "Grain": "Batch run", "Join Key": "Oracle Type + Prod Line"},
-        {"System": "WMS", "Extract": src.files["wms_order_summary"], "Records": len(src.wms_items),
-         "Grain": "Item x customer order", "Join Key": "Item Nbr"},
-        {"System": "WMS", "Extract": src.files["wms_fill_rate"], "Records": len(src.fill_orders),
-         "Grain": "Customer order", "Join Key": "Order Nbr (no item detail)"},
-        {"System": "Reconciled", "Extract": "SKU position", "Records": len(res.positions),
-         "Grain": "SKU", "Join Key": f"{matched} SKUs present in all three systems"},
-    ], widths={"Extract": 50, "Grain": 40, "Join Key": 44})
+        {"System": "Oracle", "Source": src.files.get("oracle.item", ""), "Records": len(src.items),
+         "Grain": "Item (FG or RM)", "Join Key": "Item Number"},
+        {"System": "BUSS", "Source": src.files.get("buss.sales_order", ""), "Records": len(src.sales_orders),
+         "Grain": "Order line", "Join Key": "Order Number + Order Line; Item Number"},
+        {"System": "Oracle", "Source": src.files.get("oracle.forecast", ""), "Records": len(src.forecasts),
+         "Grain": "Forecast", "Join Key": "Forecast ID; Item Number"},
+        {"System": "ODI", "Source": src.files.get("odi.batch_mapping", ""), "Records": len(src.odi),
+         "Grain": "Demand line x work order", "Join Key": "Sales Order Number / Forcast; Work Order Number"},
+        {"System": "WMS", "Source": src.files.get("wms.inventory", ""), "Records": len(src.stock),
+         "Grain": "Item x locator", "Join Key": "Item Number"},
+        {"System": "MIPS", "Source": src.files.get("mips.work_order", ""), "Records": len(src.work_orders),
+         "Grain": "Work order", "Join Key": "Work Order Number; FG Oracle Ref"},
+        {"System": "Reconciled", "Source": "SKU position", "Records": len(res.positions),
+         "Grain": "SKU", "Join Key": f"{complete} SKUs present in BUSS, ODI, WMS and MIPS"},
+    ], widths={"Source": 50, "Grain": 30, "Join Key": 50})
 
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
@@ -209,9 +204,9 @@ def write_html(res: RunResult, path: Path) -> Path:
         ("SKUs reconciled", f"{k['skus_clean']}/{k['skus_reconciled']} clean"),
         ("Exceptions", f"{k['findings']} ({k['by_severity'].get('High', 0)} high)"),
         ("Retail $ exposure", f"${k['dollar_exposure']:,.0f}"),
-        ("Over-production risk", f"{k['overproduction_risk_units']:,.0f} units"),
-        ("Surplus to carry forward", f"{k['carryover_units']:,.0f} units"),
-        ("Shipped from untracked stock", f"{k['untracked_supply_units']:,.0f} units")])
+        ("Over-production", f"{k['overproduction_units']:,.0f} units"),
+        ("Under-production", f"{k['underproduction_units']:,.0f} units"),
+        ("Demand missing from ODI", f"{k['demand_not_in_odi_units']:,.0f} units")])
     bars = "".join(
         f'<div class="bar"><span class="bl">{code} · {e(RULES[code][0])}</span>'
         f'<span class="bt"><span style="width:{n / max_rule * 100:.0f}%"></span></span><span class="bn">{n}</span></div>'
@@ -258,8 +253,8 @@ padding:8px;border-bottom:1px solid var(--line)}}th{{color:var(--mute);font-weig
 .scroll{{overflow-x:auto}}ol{{margin:6px 0 0;padding-left:20px}}li{{margin:4px 0}}
 </style></head><body><main>
 <h1>MIPS · WMS · Oracle inventory reconciliation</h1>
-<div class="meta">Lehigh Valley bakery · sales date {e(k['sales_date'])} · {k['mips_lines']} MIPS lines,
-{k['odi_runs']} ODI runs, {k['wms_orders']} WMS orders · narratives: {e(res.narration['source'])}</div>
+<div class="meta">Lehigh Valley bakery · sales date {e(k['sales_date'])} · {k['sales_order_lines']} BUSS order lines,
+{k['odi_rows']} ODI rows, {k['work_orders']} work orders · narratives: {e(res.narration['source'])}</div>
 <div class="tiles">{tiles}</div>
 <div class="grid">
 <section><h2>Shift briefing</h2><div class="card">{e(res.narration['shift_briefing'])}

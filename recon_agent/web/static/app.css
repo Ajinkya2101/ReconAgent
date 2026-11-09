@@ -280,6 +280,11 @@ h1, h2, h3, h4, p { margin: 0; }
 .eq-row small { display: block; font-size: var(--t-xs); color: var(--ink-3); font-weight: 400; }
 .eq-row dd { margin: 0; font-size: var(--t-lg); font-weight: 600; text-align: right; }
 .eq-row--missing dt, .eq-row--missing dd { color: var(--ink-3); }
+.eq-row--sub { border-top: 1px solid var(--ink); margin-top: -1px; }
+.eq-row--sub dt, .eq-row--sub dd { font-weight: 700; }
+.eq-check { font-weight: 600; color: var(--ink); }
+.eq-foot { margin: 10px 0 0; font-size: var(--t-sm); color: var(--ink-2); }
+.eq-check--off { text-decoration: underline wavy; text-underline-offset: 3px; }
 .eq-row--total { border-bottom: 0; border-top: 2px solid var(--ink); margin-top: -1px; padding-top: 10px; }
 .eq-row--total dt { font-weight: 700; }
 .eq-row--total dd { font-size: var(--t-2xl); font-weight: 700; letter-spacing: -0.015em; }
@@ -289,6 +294,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .track-bar { position: relative; height: 30px; }
 .seg { position: absolute; top: 0; bottom: 0; }
 .seg--inv { background: var(--inv); }
+.seg--alloc { background: var(--ink-3); }
 .seg--wrap { background: var(--ink); }
 .seg--short { box-shadow: inset 0 0 0 1.5px var(--ink); background: repeating-linear-gradient(90deg, transparent 0 5px, var(--rule) 5px 6px); }
 .seg--surplus {
@@ -310,6 +316,8 @@ h1, h2, h3, h4, p { margin: 0; }
 .track-legend > span { display: inline-flex; align-items: center; gap: 6px; }
 .key { display: inline-block; width: 10px; height: 10px; }
 .key--inv { background: var(--inv); }
+.key--alloc { background: var(--ink-3); }
+.key--over { box-shadow: inset 0 0 0 1px var(--ink); background: var(--from); }
 .key--wrap { background: var(--ink); }
 .key--short { box-shadow: inset 0 0 0 1.5px var(--ink); }
 .track-demand-label { font-weight: 700; color: var(--ink); }
@@ -322,7 +330,7 @@ h1, h2, h3, h4, p { margin: 0; }
 /* One shared scale for every system */
 .systems { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: var(--t-sm); }
 .systems th { text-align: left; font-weight: 500; padding: 5px 12px 5px 0; white-space: nowrap; width: 1%; }
-.systems th .code { display: inline-block; width: 4.2ch; font-size: var(--t-xs); font-weight: 700; color: var(--ink-3); }
+.systems th .code { display: inline-block; width: 6.4ch; font-size: var(--t-xs); font-weight: 700; color: var(--ink-3); }
 .systems td { padding: 5px 0; }
 .systems-bar { position: relative; }
 .systems-bar .bar { display: block; height: 8px; background: var(--ink-2); }
@@ -470,7 +478,8 @@ h1, h2, h3, h4, p { margin: 0; }
 .records caption { text-align: left; font-size: var(--t-xs); font-weight: 650; color: var(--ink-2); padding-bottom: 4px; }
 .records th { text-align: left; font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); padding: 4px 8px 4px 0; border-bottom: 1px solid var(--rule-2); white-space: nowrap; }
 .records td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--rule); }
-.records .num { padding-right: 0; }
+.records .num { padding-right: 16px; }
+.records .num:last-child { padding-right: 0; }
 .records th.num { text-align: right; }
 
 /* ---- Assistant -------------------------------------------------------- */

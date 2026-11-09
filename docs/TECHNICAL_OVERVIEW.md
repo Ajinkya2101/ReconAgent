@@ -1,5 +1,7 @@
 # Inventory Reconciliation Agent: Technical Overview
 
+> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL_9NOV.md](DATA_MODEL_9NOV.md) and [EVENT_CONTRACT.md](EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
+
 What the application does, how it is built, and the stack it runs on. For the planner and business view, see [USER_GUIDE.md](USER_GUIDE.md).
 
 ## 1. What the application does

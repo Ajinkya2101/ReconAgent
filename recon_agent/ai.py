@@ -4,8 +4,8 @@
   happened, which system misfired and how, the business impact, who acts and
   which record confirms it) plus a shift-handoff briefing - one structured
   (JSON-schema) output call per run.
-* ask():     a tool-using copilot that answers planner questions ("why does
-  MIPS still want 2,000 of 150080?") by querying the reconciled data - it never
+* ask():     a tool-using copilot that answers planner questions ("why is the
+  work order for 950513 bigger than the shortfall?") by querying the reconciled data - it never
   answers from memory.
 
 Numbers always come from the deterministic engine, and so does accountability:
@@ -41,19 +41,23 @@ from .detectors import Finding
 from .position import SkuPosition
 
 SYSTEM_PROMPT = """You are the Inventory Reconciliation Agent for Bimbo Bakeries USA's Lehigh Valley \
-(Breinigsville, PA) bakery. You reconcile three systems:
-- MIPS (in-house planning): sales-order lines (Source System BUSS) and supply-planning lines \
-(OCloud Region2), production schedule, runs, and inventory applied to demand.
-- ODI / Oracle Cloud: finished-goods production results per run (net units ordered, wrapped units, \
-expected ending inventory) and batch data.
-- WMS: customer orders, ticket allocation, fill rate, shipments, freezer inventory.
+(Breinigsville, PA, plant UBD) bakery. You check that five systems agree on one demand-to-delivery chain:
+- BUSS: customer sales orders (order lines, quantities, requested ship dates).
+- Oracle: the item master and Oracle Planning forecasts.
+- ODI: the batch data entry mapping that joins each order line and forecast to its work order and MIPS batches.
+- WMS: warehouse stock (on hand = available + allocated). All on-hand stock is kept in WMS only.
+- MIPS: production work orders. MIPS must plan demand less allocated stock (Forecast / Order Quantity) and \
+size the work order to the shortfall.
+
+The equation is: Work Order Qty = (Sales Orders + Forecast) - Allocated - Available. Finished goods move \
+from MIPS to WMS before the ship date; raw materials move from WMS to MIPS when a work order is released.
 
 Your readers are production planners and shift supervisors across 3 shifts. Write in plain \
 operational language: name the SKU, the quantities, the system that is wrong, and the exact correction \
-(e.g. "Apply the 1,200 units to the active sales-order lines and reduce the production requirement to \
-800"). Use only the numbers you are given or retrieve with tools - never estimate or invent quantities. \
-If the data cannot explain a variance, say what additional record (ticket, return, freezer lot, Oracle \
-transaction) would resolve it.
+(e.g. "Cut work order WO-UBD-20260912-002 to 3,700 units: WMS already has 1,140 available"). Use only the \
+numbers you are given or retrieve with tools - never estimate or invent quantities. If the data cannot \
+explain a variance, say what additional record (BUSS order line, ODI mapping row, WMS locator count, MIPS \
+work order) would resolve it.
 
 Each finding carries an accountability record computed by the rules: the impact, the origin system (or \
 the interface between two systems) where the error started, the failure type, how certain that is, and \
@@ -62,7 +66,7 @@ as established fact: explain it, never reassign it. Where its basis is "likely" 
 and name the record that would settle it."""
 
 OWNERS = ["Production Planner", "Shift Supervisor", "Warehouse / WMS", "IT / Integration", "Master Data"]
-CHAIN_SYSTEMS = ["MIPS", "ODI", "WMS", "Oracle", "Integration"]
+CHAIN_SYSTEMS = ["BUSS", "Oracle", "MIPS", "ODI", "WMS", "Integration"]
 
 NARRATION_SCHEMA = {
     "type": "object",
@@ -215,7 +219,7 @@ def audit(record: dict, strict: bool = True) -> str:
     return entry["audit_id"]
 
 
-# A figure as written in text: "1,200", "3.5", "12%". Codes such as R05, ML-0017 or SU900210 and the
+# A figure as written in text: "1,200", "3.5", "12%". Codes such as R05, ODI-0017 or WO-UBD-20260912-001 and the
 # trailing parts of dates and times (11/07, 20:15) are not figures.
 _FIGURE = re.compile(r"(?<![\w.:/])(?<!\w-)(\d[\d,]*(?:\.\d+)?)(?!\w)")
 SMALL_COUNT = 10   # "3 lines", "run 2": counts this small are not checked
@@ -271,8 +275,7 @@ def check_entry(entry: dict, f: Finding, payloads: dict[str, dict], kpis: dict) 
     cited = [x for x in entry.get("evidence_used") or [] if isinstance(x, str)]
     chain = [s for s in entry.get("cause_chain") or []
              if isinstance(s, dict) and s.get("system") in CHAIN_SYSTEMS and str(s.get("step", "")).strip()]
-    known = known_figures(payloads[f.id], [payloads[x] for x in linked], kpis,
-                          config.ORACLE_POSTING_SLA_MINUTES, config.HIGH_ACK_MINUTES)
+    known = known_figures(payloads[f.id], [payloads[x] for x in linked], kpis, config.HIGH_ACK_MINUTES)
     texts = [entry.get(k, "") for k in ("explanation", "root_cause", "impact", "verify")] + [s["step"] for s in chain]
     checked, unverified = check_figures(texts, known)
     origin = (f.accountability or {}).get("origin")
@@ -316,24 +319,24 @@ def narrate_with_model(top: list[Finding], kpis: dict) -> dict:
         "- explanation: 3-5 sentences a supervisor can act on: what happened, which system misfired and how, "
         "what that did to the other systems, and the exact correction.\n"
         "- root_cause: one sentence naming the step or handoff that failed (from the accountability record).\n"
-        "- cause_chain: 2-4 steps in the order they happened, one system each (MIPS, ODI, WMS, Oracle, or "
-        "Integration for an interface between systems), saying what that system did. Start with the "
+        "- cause_chain: 2-4 steps in the order they happened, one system each (BUSS, Oracle, MIPS, ODI, WMS, "
+        "or Integration for an interface between systems), saying what that system did. Start with the "
         "accountability origin. Follow the accountability roles; do not reassign them.\n"
         "- impact: one sentence on the business effect (the accountability impact: over-production, "
-        "under-production, stranded surplus, short shipment, overstated inventory, traceability gap, "
-        "financial posting gap or data integrity), with its units and dollars.\n"
+        "under-production, short shipment, overstated inventory, traceability gap or data integrity), with "
+        "its units and dollars.\n"
         "- evidence_used: the evidence keys your text relies on, spelled exactly as given.\n"
-        "- verify: the one source record (MIPS line, ODI run, WMS order, ticket or transaction, Oracle "
-        "posting) that would confirm the attribution; essential when the basis is not \"certain\".\n"
+        "- verify: the one source record (BUSS order line, Oracle forecast, ODI mapping row, WMS "
+        "locator, MIPS work order) that would confirm the attribution; essential when the basis is not \"certain\".\n"
         "- linked_findings: ids of other findings above that share the cause or follow from it (for "
-        "example R09 and R10 on the same SKU), otherwise [].\n"
+        "example R02, R04 and R05 on the same SKU), otherwise [].\n"
         "- owner.\n"
         "Quote only figures that appear in the data above; do not work out new totals or differences. "
         "Every figure you write is checked against the engine's numbers and anything unmatched is shown "
         "to the planner as unverified. "
         "Then write a shift-handoff briefing (under 170 words) that says which system caused the most "
         "exposure today (from by_origin) and the 3-5 actions that remove the most over-production and "
-        "inventory risk today. Return one entry per finding id, using the ids exactly as given.")
+        "short-shipment risk today. Return one entry per finding id, using the ids exactly as given.")
     request = {"kpis": kpis, "findings": list(payloads.values())}
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     try:
@@ -357,7 +360,7 @@ def narrate_with_model(top: list[Finding], kpis: dict) -> dict:
 
     by_f = {f.id: f for f in top}
     by_id = {x["id"]: check_entry(x, by_f[x["id"]], payloads, kpis) for x in entries}
-    briefing_known = known_figures(request, config.ORACLE_POSTING_SLA_MINUTES, config.HIGH_ACK_MINUTES)
+    briefing_known = known_figures(request, config.HIGH_ACK_MINUTES)
     briefing_check = dict(zip(("figures_checked", "unverified_figures"),
                               check_figures([briefing, *actions], briefing_known)))
     audit_id = audit({"kind": "narration", "prompt_sha256": prompt_hash, "request": request,
@@ -371,25 +374,25 @@ def narrate_with_model(top: list[Finding], kpis: dict) -> dict:
             "audit_id": audit_id, "generated_at": at, "briefing_check": briefing_check}
 
 
+OWNER_BY_RULE = {"R01": OWNERS[3], "R02": OWNERS[3], "R03": OWNERS[3], "R04": OWNERS[0], "R05": OWNERS[0],
+                 "R06": OWNERS[0], "R07": OWNERS[3], "R08": OWNERS[0], "R09": OWNERS[2], "R10": OWNERS[2],
+                 "R11": OWNERS[1], "R12": OWNERS[1], "R13": OWNERS[4]}
+
+
 def offline_narration(findings: list[Finding], kpis: dict) -> dict:
-    owner_by_rule = {"R01": OWNERS[0], "R02": OWNERS[0], "R03": OWNERS[0], "R04": OWNERS[0],
-                     "R05": OWNERS[1], "R06": OWNERS[0], "R07": OWNERS[2], "R08": OWNERS[0],
-                     "R09": OWNERS[3], "R10": OWNERS[2], "R11": OWNERS[4], "R12": OWNERS[2],
-                     "R13": OWNERS[3], "R14": OWNERS[1], "R15": OWNERS[3], "R16": OWNERS[3],
-                     "R17": OWNERS[1], "R18": OWNERS[3], "R19": OWNERS[2]}
     by_id = {f.id: {"id": f.id, "explanation": f.recommendation, "root_cause": f.scenario,
-                    "owner": owner_by_rule[f.rule]} for f in findings}
+                    "owner": OWNER_BY_RULE.get(f.rule, OWNERS[0])} for f in findings}
     high = [f for f in findings if f.severity == "High"]
     origins = kpis.get("by_origin") or {}
     started = "; ".join(f"{name} {r['flags']} ({r['high']} high, ${r['dollars']:,.0f})"
                         for name, r in list(origins.items())[:4])
     briefing = (
         f"{kpis['findings']} reconciliation exceptions for sales date {kpis['sales_date']} "
-        f"({len(high)} high severity), ${kpis['dollar_exposure']:,.0f} of product at risk. "
-        f"{kpis['overproduction_risk_units']:,.0f} units of over-production risk from inventory applied "
-        f"to single order lines or recovery runs; {kpis['carryover_units']:,.0f} surplus units must be "
-        f"carried to the next sales day; {kpis['untracked_supply_units']:,.0f} units were shipped from "
-        f"stock MIPS cannot see."
+        f"({len(high)} high severity), ${kpis['dollar_exposure']:,.0f} of product at risk across "
+        f"{kpis['skus_reconciled']} SKUs ({kpis['skus_clean']} reconcile). Work orders over-produce "
+        f"{kpis['overproduction_units']:,.0f} units and under-produce {kpis['underproduction_units']:,.0f} units "
+        f"against the shortfall; {kpis['demand_not_in_odi_units']:,.0f} units of BUSS and Oracle demand are "
+        f"missing from ODI."
         + (f" Where the flags started: {started}." if started else ""))
     return {"shift_briefing": briefing, "top_actions": [f"{f.sku or f.description}: {f.recommendation}"
                                                        for f in findings[:5]],
@@ -405,17 +408,18 @@ TOOLS = [
         name="search_items",
         description="Find SKUs whose description or number contains the text (case-insensitive).",
         parameters={"type": "object", "required": ["text"], "properties": {
-            "text": {"type": "string", "description": 'Part of an item description or SKU number, e.g. "brioche" or "150080".'}}}),
+            "text": {"type": "string", "description": 'Part of an item description or SKU number, e.g. "hot dog" or "76108".'}}}),
     genai.FunctionDefinition(
         name="get_sku_position",
-        description="Reconciled MIPS/ODI/WMS position for one SKU, with every MIPS line and ODI run.",
+        description="Reconciled position for one SKU: BUSS orders, Oracle forecast, WMS stock, MIPS work orders "
+                    "and every ODI mapping row.",
         parameters={"type": "object", "required": ["sku"], "properties": {
-            "sku": {"type": "string", "description": 'Oracle FG number, e.g. "150080".'}}}),
+            "sku": {"type": "string", "description": 'Oracle item number, e.g. "76108".'}}}),
     genai.FunctionDefinition(
         name="list_findings",
         description="List reconciliation findings, highest priority first. All filters optional.",
         parameters={"type": "object", "properties": {
-            "rule": {"type": "string", "description": 'Rule code R01-R17 (e.g. "R05" recovery runs, "R07" untracked/freezer supply).'},
+            "rule": {"type": "string", "description": 'Rule code R01-R13 (e.g. "R05" work order not sized to the shortfall, "R02" ODI quantity stale).'},
             "severity": {"type": "string", "enum": ["High", "Medium", "Low"]},
             "sku": {"type": "string", "description": "Restrict to one SKU."},
             "limit": {"type": "integer", "description": "Maximum findings to return (default 20)."}}}),
@@ -432,9 +436,10 @@ def run_tool(name: str, args: dict, positions: dict[str, SkuPosition], findings:
         t = str(args.get("text", "")).lower()
 
         def names(p: SkuPosition) -> str:
-            # Each system abbreviates differently (MIPS "BRIOCHE" vs WMS "BRI").
-            return " | ".join({p.description, *(l.description for l in p.lines),
-                               *(r.description for r in p.runs)}).lower()
+            # Each system names the item its own way (MIPS description vs ODI's MIPS Description).
+            return " | ".join({p.description, *(o.description for o in p.orders),
+                               *(w.description for w in p.work_orders),
+                               *(e.mips_description for e in p.odi)}).lower()
 
         hits = [{"sku": p.sku, "description": p.description} for p in positions.values()
                 if t in names(p) or t in p.sku]
@@ -447,13 +452,14 @@ def run_tool(name: str, args: dict, positions: dict[str, SkuPosition], findings:
             return json.dumps({"error": f"SKU {sku} not found; use search_items"})
         return json.dumps({
             "position": p.to_row(),
-            "mips_lines": [{"qty": l.order_qty, "source": l.source_system, "moved": l.order_moved,
-                            "offset_sales_date": l.offset_sales_date, "container": l.container_code,
-                            "last_modified": l.last_modified} for l in p.lines],
-            "odi_runs": [{"formula": r.formula_type, "line": r.line, "shift": r.shift, "start": r.start,
-                          "net_ordered": r.net_units_ordered, "wrapped": r.wrapped_units,
-                          "expected_ending_inventory": r.expected_ending_inventory} for r in p.runs],
-            "wms_orders": [vars(o) for o in p.wms.orders] if p.wms else [],
+            "sales_orders": [{"order": o.order_nbr, "line": o.line, "customer": o.customer, "qty": o.qty,
+                              "requested_ship": o.requested_ship} for o in p.orders],
+            "forecasts": [{"id": f.forecast_id, "date": f.date, "qty": f.qty} for f in p.forecasts],
+            "wms_stock": [vars(s) for s in p.stock],
+            "work_orders": [vars(w) for w in p.work_orders],
+            "odi_rows": [{"entry": e.entry_id, "source": e.source_system, "ref": e.ref, "qty": e.qty,
+                          "allocated": e.allocated, "work_order": e.wo, "work_order_qty": e.wo_qty,
+                          "wrap_end": e.wrap_end, "requested_ship": e.requested_ship} for e in p.odi],
             "findings": [f.id for f in findings if f.sku == p.sku],
         }, default=str)
 

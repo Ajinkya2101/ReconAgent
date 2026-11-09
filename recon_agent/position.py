@@ -1,30 +1,25 @@
-"""Reconciled SKU position: one row per SKU that all three systems agree on.
+"""Reconciled SKU position: the business team's demand-to-delivery equation, one row per SKU.
 
-    Net production requirement = Total valid demand
-                                 - Available usable inventory
-                                 - Completed production
-                                 + Valid returns / adjustments
+    Total demand   = Sales orders (BUSS, all lines) + Forecast (Oracle Planning)
+    Demand left    = Total demand - Allocated stock (WMS)        -> MIPS Forecast / Order Quantity
+    Shortfall      = Demand left  - Available stock (WMS)        -> MIPS Work Order Quantity
+    Check          = Work order + Available + Allocated = Total demand
 
-Demand comes from every open MIPS schedule line for the SKU (sales orders *and*
-supply-planning lines, including lines moved to another sales day; lines marked
-Closed are not valid demand and are kept aside on the position), so
-inventory is consolidated at SKU level instead of being applied to the first
-matching line only.
+For 76108 on 12 Sep 2026: (14,339 + 41,769) - 473 - 7,000 = 48,635 (docs/DATA_MODEL_9NOV.md).
+All on-hand stock is kept in WMS only, so when available stock covers the demand left the
+shortfall is 0 and the surplus simply stays in WMS.
 
-Inventory is inferred, not read: it is the demand MIPS sized the first production
-run against, less what that run ordered. On the event feed that is the demand when
-the run was last ordered (SourceData.demand_at_order), so demand added or removed
-afterwards moves the net requirement one for one and never shows up as inventory.
-Returns are units WMS booked back to the plant, on the ticket or as a return
-transaction (the larger of the two per ticket, so a return booked in both counts once).
+Each ODI mapping row belongs to the SKU of the demand line it maps (the BUSS order line or
+the Oracle forecast it names): ODI leaves Item Number empty on lines served from stock.
 """
 from __future__ import annotations
 
+import datetime as dt
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from . import config
-from .ingest import FgRun, MipsLine, SourceData, WmsItem
+from .ingest import Forecast, OdiEntry, SalesOrder, SourceData, WmsStock, WorkOrder
 
 
 @dataclass
@@ -32,207 +27,180 @@ class SkuPosition:
     sku: str
     description: str
     unit_price: float
-    lines: list[MipsLine] = field(default_factory=list)
-    runs: list[FgRun] = field(default_factory=list)
-    wms: WmsItem | None = None
-    returns: float = 0.0   # units WMS returned to the plant (event feed only): wrapped but not usable
-    demand_basis: float | None = None   # event feed: demand when the first run was last ordered
-    closed_lines: list[MipsLine] = field(default_factory=list)   # MIPS lines marked Closed: not valid demand
+    orders: list[SalesOrder] = field(default_factory=list)
+    forecasts: list[Forecast] = field(default_factory=list)
+    odi: list[OdiEntry] = field(default_factory=list)
+    stock: list[WmsStock] = field(default_factory=list)
+    work_orders: list[WorkOrder] = field(default_factory=list)
+    in_item_master: bool = True
 
-    # --- MIPS demand -----------------------------------------------------
+    # --- demand (BUSS + Oracle) -------------------------------------------
     @property
-    def demand_total(self) -> float:
-        return sum(l.order_qty for l in self.lines)
-
-    @property
-    def demand_moved(self) -> float:
-        return sum(l.order_qty for l in self.lines if l.order_moved)
+    def so_qty(self) -> float:
+        return sum(o.qty for o in self.orders)
 
     @property
-    def demand_current(self) -> float:
-        return self.demand_total - self.demand_moved
+    def forecast_qty(self) -> float:
+        return sum(f.qty for f in self.forecasts)
 
     @property
-    def demand_at_order(self) -> float:
-        """The demand MIPS sized the first production run against (today's demand without history)."""
-        return self.demand_total if self.demand_basis is None else self.demand_basis
+    def demand(self) -> float:
+        return self.so_qty + self.forecast_qty
+
+    # --- stock (WMS) --------------------------------------------------------
+    @property
+    def on_hand(self) -> float:
+        return sum(s.on_hand for s in self.stock)
 
     @property
-    def demand_after_order(self) -> float:
-        """Demand added (+) or removed (-) after the first run was ordered: new demand, not inventory."""
-        return self.demand_total - self.demand_at_order
+    def available(self) -> float:
+        return sum(s.available for s in self.stock)
 
     @property
-    def demand_sales_orders(self) -> float:
-        return sum(l.order_qty for l in self.lines if l.is_sales_order)
+    def allocated(self) -> float:
+        return sum(s.allocated for s in self.stock)
+
+    # --- the equation -------------------------------------------------------
+    @property
+    def demand_left(self) -> float:
+        """What MIPS must plan: demand less the stock already reserved for orders."""
+        return max(0.0, self.demand - self.allocated)
 
     @property
-    def demand_supply_plan(self) -> float:
-        return self.demand_total - self.demand_sales_orders
-
-    # --- ODI / Oracle production ----------------------------------------
-    @property
-    def net_ordered(self) -> float:
-        return sum(r.net_units_ordered for r in self.runs)
+    def shortfall(self) -> float:
+        """What the work order must make: demand left less the free stock."""
+        return max(0.0, self.demand_left - self.available)
 
     @property
-    def wrapped(self) -> float:
-        return sum(r.wrapped_units for r in self.runs)
+    def stock_surplus(self) -> float:
+        """Free stock beyond the demand left: it stays in WMS."""
+        return max(0.0, self.available - self.demand_left)
+
+    # --- MIPS ---------------------------------------------------------------
+    @property
+    def mips_demand(self) -> float:
+        return sum(w.demand_qty for w in self.work_orders)
 
     @property
-    def expected_excess(self) -> float:
-        return sum(r.expected_ending_inventory for r in self.runs)
+    def wo_qty(self) -> float:
+        return sum(w.wo_qty for w in self.work_orders)
 
     @property
-    def recorded_inventory(self) -> float:
-        return sum(r.mips_beginning_inventory + r.mips_inventory_adjustment for r in self.runs)
+    def wo_numbers(self) -> list[str]:
+        return [w.wo for w in self.work_orders]
+
+    # --- ODI ----------------------------------------------------------------
+    @property
+    def odi_demand(self) -> float:
+        return sum(e.qty for e in self.odi)
 
     @property
-    def active_runs(self) -> list[FgRun]:
-        return [r for r in self.runs if r.net_units_ordered or r.wrapped_units]
+    def odi_allocated(self) -> float:
+        return sum(e.allocated for e in self.odi)
 
     @property
-    def implied_inventory(self) -> float:
-        """Inventory MIPS netted out of demand before sending it to production.
-
-        Only the part of demand not sent to the *first* active run counts;
-        later recovery runs re-order the shortfall and must not reduce it. The
-        demand is the one that run was ordered against: a later change is new demand.
-        """
-        if not self.active_runs:
-            return 0.0
-        return max(0.0, self.demand_at_order - self.active_runs[0].net_units_ordered)
+    def odi_wo_qty(self) -> dict[str, float]:
+        """Work-order quantity ODI carries per work order (the first row that names it)."""
+        out: dict[str, float] = {}
+        for e in self.odi:
+            if e.wo:
+                out.setdefault(e.wo, e.wo_qty)
+        return out
 
     @property
-    def usable_supply(self) -> float:
-        """Inventory applied plus what was wrapped, less what went back to the plant."""
-        return self.implied_inventory + self.wrapped - self.returns
+    def odi_demand_left(self) -> float:
+        """The demand left as ODI's copy of the demand gives it (what MIPS sees through ODI)."""
+        return max(0.0, self.odi_demand - self.allocated)
 
-    # --- WMS fulfilment --------------------------------------------------
+    # --- check --------------------------------------------------------------
     @property
-    def wms_order_qty(self) -> float:
-        return self.wms.order_qty if self.wms else 0.0
-
-    @property
-    def wms_allocated(self) -> float:
-        return self.wms.allocated if self.wms else 0.0
+    def planned_supply(self) -> float:
+        return self.wo_qty + self.available + self.allocated
 
     @property
-    def upc_mips(self) -> float:
-        counts = Counter(l.units_per_container for l in self.lines if l.container_code == "01")
-        return counts.most_common(1)[0][0] if counts else 0.0
-
-    # --- Reconciled requirement -----------------------------------------
-    @property
-    def net_requirement(self) -> float:
-        """Positive = still to produce, negative = surplus to carry forward."""
-        return self.demand_total - self.usable_supply
+    def balance(self) -> float:
+        """Planned supply less demand: 0 reconciles, positive over-produces, negative falls short."""
+        return self.planned_supply - self.demand
 
     @property
-    def first_line_only_requirement(self) -> float:
-        """What MIPS reports when inventory is applied to the first line only."""
-        if not self.lines:
-            return 0.0
-        covered = min(self.implied_inventory, self.lines[0].order_qty)
-        return self.demand_total - covered
+    def sales_date(self) -> dt.date | None:
+        dates = Counter(d for d in [o.sales_date for o in self.orders] + [f.date for f in self.forecasts] if d)
+        return dates.most_common(1)[0][0] if dates else None
 
     @property
-    def consolidated_requirement(self) -> float:
-        return max(0.0, self.demand_total - self.implied_inventory)
-
-    @property
-    def first_line_overproduction_risk(self) -> float:
-        return max(0.0, self.first_line_only_requirement - self.consolidated_requirement)
+    def buss_codes(self) -> set[str]:
+        return {o.buss_code for o in self.orders if o.buss_code}
 
     def to_row(self) -> dict:
         return {
             "SKU": self.sku,
             "Description": self.description,
-            "MIPS Lines": len(self.lines),
-            "Closed Lines (excluded)": len(self.closed_lines),
-            "Demand Total": self.demand_total,
-            "Demand Sales Date": self.demand_current,
-            "Demand Moved": self.demand_moved,
-            "Demand After Order": self.demand_after_order,
-            "Sales Orders (BUSS)": self.demand_sales_orders,
-            "Supply Plan (OCloud)": self.demand_supply_plan,
-            "Inventory Applied (implied)": self.implied_inventory,
-            "Inventory Recorded in MIPS": self.recorded_inventory,
-            "ODI Runs": len(self.active_runs),
-            "ODI Net Ordered": self.net_ordered,
-            "ODI Wrapped": self.wrapped,
-            "ODI Expected Excess": self.expected_excess,
-            "WMS Order Qty": self.wms_order_qty,
-            "WMS Allocated": self.wms_allocated,
-            "Returns to Plant": self.returns,
-            "Net Requirement": self.net_requirement,
-            "Units/Container MIPS": self.upc_mips,
-            "Units/Container WMS": self.wms.units_per_container if self.wms else None,
+            "Sales Order Lines": len(self.orders),
+            "Sales Orders (BUSS)": self.so_qty,
+            "Forecast (Oracle)": self.forecast_qty,
+            "Total Demand": self.demand,
+            "WMS On Hand": self.on_hand,
+            "WMS Allocated": self.allocated,
+            "WMS Available": self.available,
+            "Demand Left": self.demand_left,
+            "Shortfall": self.shortfall,
+            "Stock Surplus": self.stock_surplus,
+            "MIPS Forecast / Order Qty": self.mips_demand,
+            "MIPS Work Order Qty": self.wo_qty,
+            "Work Orders": ", ".join(self.wo_numbers),
+            "ODI Demand": self.odi_demand,
+            "ODI Allocated": self.odi_allocated,
+            "Balance (supply - demand)": self.balance,
             "Unit Price": self.unit_price,
         }
 
 
-def propose_allocation(p: SkuPosition) -> list[dict]:
-    """Consolidated line-level allocation for one SKU.
-
-    Inventory, then production, is applied across *all* lines in priority
-    order - earliest sales date first, customer sales orders before supply-plan
-    lines - and whatever is left is carried to the next sales day.
-    """
-    ordered = sorted(p.lines, key=lambda l: (l.offset_sales_date, not l.is_sales_order, -l.order_qty))
-    inventory, production = p.implied_inventory, p.wrapped
-    rows = []
-    for l in ordered:
-        from_inv = min(inventory, l.order_qty)
-        inventory -= from_inv
-        from_prod = min(production, l.order_qty - from_inv)
-        production -= from_prod
-        rows.append({"SKU": p.sku, "Description": p.description,
-                     "Sales Date": l.offset_sales_date, "Line Type": "Sales order" if l.is_sales_order
-                     else "Supply plan", "Moved": l.order_moved, "Order Qty": l.order_qty,
-                     "Inventory Applied": from_inv, "Production Applied": from_prod,
-                     "Unfilled": l.order_qty - from_inv - from_prod})
-    leftover = inventory + production
-    if leftover:
-        rows.append({"SKU": p.sku, "Description": p.description, "Sales Date": "next sales day",
-                     "Line Type": "Carry forward", "Moved": False, "Order Qty": 0,
-                     "Inventory Applied": -leftover, "Production Applied": 0, "Unfilled": 0})
-    return rows
+def resolve_odi_skus(src: SourceData) -> None:
+    """Give each ODI row the SKU of the demand line it maps; fall back to its own Item Number."""
+    so_sku = {(o.order_nbr, o.line): o.sku for o in src.sales_orders}
+    fc_sku = {f.forecast_id: f.sku for f in src.forecasts}
+    wo_sku = {w.wo: w.sku for w in src.work_orders}
+    for e in src.odi:
+        if e.is_sales_order:
+            sku = so_sku.get((e.ref, e.ref_line or 1))
+        else:
+            sku = fc_sku.get(e.ref)
+        e.sku = sku or e.item or wo_sku.get(e.wo, "")
 
 
 def build_positions(src: SourceData) -> dict[str, SkuPosition]:
-    # Valid demand only: a closed MIPS line is kept on the position for the record but never counted.
-    lines_by_sku: dict[str, list[MipsLine]] = defaultdict(list)
-    closed_by_sku: dict[str, list[MipsLine]] = defaultdict(list)
-    for l in src.mips:
-        (closed_by_sku if l.closed else lines_by_sku)[l.sku].append(l)
-    runs_by_sku: dict[str, list[FgRun]] = defaultdict(list)
-    for r in sorted(src.fg_runs, key=lambda r: (r.start is None, r.start)):
-        runs_by_sku[r.sku].append(r)
+    """One position per SKU that has orders, a work order, an ODI row or stock on the day.
 
-    # Returns per (SKU, ticket): booked by return transactions or on the ticket itself. Where both
-    # carry it (the ticket was corrected), take the larger so the same units count once.
-    returned: dict[tuple[str, str], float] = defaultdict(float)
-    for t in src.wms_txns:
-        if t.txn_type == "RETURN_TO_PLANT":
-            returned[(t.sku, t.ticket)] += t.qty
-    for tk in src.tickets:
-        if tk.returned_qty > 0:
-            returned[(tk.sku, tk.ticket)] = max(returned.get((tk.sku, tk.ticket), 0.0), tk.returned_qty)
-    returns: dict[str, float] = defaultdict(float)
-    for (sku, _), qty in returned.items():
-        returns[sku] += qty
+    An item with only an Oracle forecast is planned in Oracle but not yet scheduled anywhere
+    else: it is master planning, not a mismatch, so it gets no position (the workbook carries
+    forecasts for all ten FG items and the rest of the chain for one)."""
+    resolve_odi_skus(src)
+    by: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    for o in src.sales_orders:
+        by[o.sku]["orders"].append(o)
+    for w in src.work_orders:
+        by[w.sku]["work_orders"].append(w)
+    for e in src.odi:
+        if e.sku:
+            by[e.sku]["odi"].append(e)
+    for s in src.stock:
+        if s.item_type != "RM":
+            by[s.sku]["stock"].append(s)
+    in_scope = set(by)
+    for f in src.forecasts:
+        if f.sku in in_scope:
+            by[f.sku]["forecasts"].append(f)
 
     positions: dict[str, SkuPosition] = {}
-    for sku in set(lines_by_sku) | set(runs_by_sku) | set(src.wms_items):
-        lines = lines_by_sku.get(sku, [])
-        runs = runs_by_sku.get(sku, [])
-        wms = src.wms_items.get(sku)
-        desc = (wms.description if wms else "") or (runs[0].description if runs else "") \
-            or (lines[0].description if lines else "")
-        price = next((l.retail_price for l in lines if l.retail_price), config.DEFAULT_UNIT_PRICE)
+    for sku, parts in by.items():
+        item = src.items.get(sku)
+        desc = (item.description if item else "") or next(
+            (x.description for k in ("orders", "work_orders", "stock", "forecasts") for x in parts.get(k, [])
+             if x.description), "")
+        price = next((o.price for o in parts.get("orders", []) if o.price), config.DEFAULT_UNIT_PRICE)
         positions[sku] = SkuPosition(sku=sku, description=desc, unit_price=price,
-                                     lines=lines, runs=runs, wms=wms, returns=returns.get(sku, 0.0),
-                                     demand_basis=src.demand_at_order.get(sku),
-                                     closed_lines=closed_by_sku.get(sku, []))
+                                     orders=parts.get("orders", []), forecasts=parts.get("forecasts", []),
+                                     odi=parts.get("odi", []), stock=parts.get("stock", []),
+                                     work_orders=parts.get("work_orders", []),
+                                     in_item_master=item is not None or not src.items)
     return positions

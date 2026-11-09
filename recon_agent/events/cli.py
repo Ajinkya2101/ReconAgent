@@ -1,6 +1,6 @@
 """`python -m recon_agent events ...`: the producer side of the POC feed.
 
-    events seed [--sales-date 2026-11-07] [--reset]   publish the synthetic starting day
+    events seed [--sales-date 2026-09-12] [--reset]   publish the starting day (9 Nov mapping, 3 SKUs)
     events status                                     log position, rows per entity, clock
     events tail [-n 20]                               latest events
     events show ENTITY [KEY]                          current rows (from the projection)
@@ -10,7 +10,7 @@
     events clock [--set T] [--advance 30m] [--rate 60] [--pause | --resume]
     events entities                                   the contract: entities and columns
     events reset                                      drop every event and the clock
-    events scenario list | run S5 [--reset] [--pause 3]   the eight scripted scenarios
+    events scenario list | run S5 [--reset] [--pause 3]   the ten scripted scenarios
     events fault list | add KIND [--source WMS] [--entity E] [--seconds 60] [--batch 3] [--count 1]
     events fault remove ID | clear                    integration faults (delay, drop, duplicate, reorder)
     events deliver [--now] [--replay-dropped]         deliver what is due (or everything), replay drops
@@ -108,7 +108,7 @@ def run(args) -> None:
               f"contract v{contract.VERSION}")
         print(f"Faults   {len(log.faults())} active; {i['pending']} delayed, {i['held']} held, {i['dropped']} dropped")
         print(f"Clock    {_clock_line(clock)}")
-        print(f"Feed     the worklist reads {'this log' if config.SOURCE_MODE == 'events' else 'the Excel extracts'}"
+        print(f"Feed     the worklist reads {'this log' if config.SOURCE_MODE == 'events' else 'the source workbook'}"
               f" (RECON_SOURCE={config.SOURCE_MODE})")
         for name, table in p.tables.items():
             print(f"  {name:<18} {len(table):>4} rows")

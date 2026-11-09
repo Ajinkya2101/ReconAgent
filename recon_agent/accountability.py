@@ -10,20 +10,19 @@ rule used, so the attribution is as deterministic and auditable as the quantity:
     failure_point  one sentence naming the step that went wrong
     basis          how sure the attribution is: "certain" (the data proves it),
                    "likely" (the usual cause; another is possible) or "undetermined"
-    systems        one entry per system - MIPS, ODI and WMS always, Oracle when the
-                   rule involves it - with its role and what it shows
+    systems        one entry per system - MIPS, ODI and WMS always, BUSS and Oracle when
+                   the rule involves them - with its role and what it shows
 
 The AI layer explains this record in more detail; it never changes it.
 """
 from __future__ import annotations
 
-import datetime as dt
-
 from .detectors import Finding
 from .position import SkuPosition
 
-SYSTEMS = ("MIPS", "ODI", "WMS")   # always listed; "Oracle" is added when a rule involves it
-ORIGINS = ("MIPS", "ODI", "WMS", "Oracle", "Integration", "Undetermined")
+SYSTEMS = ("MIPS", "ODI", "WMS")   # always listed; BUSS and Oracle are added when a rule involves them
+OPTIONAL = ("BUSS", "Oracle")
+ORIGINS = ("BUSS", "Oracle", "MIPS", "ODI", "WMS", "Integration", "Undetermined")
 ROLES = {
     "Misfired": "the system where the error started",
     "Affected": "holds or acts on a wrong value because of it",
@@ -32,8 +31,8 @@ ROLES = {
     "To check": "this rule cannot see it, but it may carry the error",
     "Not involved": "plays no part in this error",
 }
-IMPACTS = ("Over-production", "Under-production", "Stranded surplus", "Short shipment",
-           "Overstated inventory", "Traceability gap", "Financial posting gap", "Data integrity")
+IMPACTS = ("Over-production", "Under-production", "Short shipment", "Overstated inventory",
+           "Traceability gap", "Data integrity")
 BASIS = ("certain", "likely", "undetermined")
 
 
@@ -44,316 +43,225 @@ def _n(x) -> str:
         return str(x)
 
 
+def _same(a: float, b: float) -> bool:
+    return abs(a - b) < 0.5
+
+
 def _record(f: Finding, impact: str, origin: str, failure_type: str, failure_point: str, basis: str,
             roles: dict[str, tuple[str, str]], handoff: str | None = None) -> dict:
-    names = list(SYSTEMS) + (["Oracle"] if "Oracle" in f.systems or "Oracle" in roles else [])
+    names = list(SYSTEMS) + [s for s in OPTIONAL if s in f.systems or s in roles]
     systems = [{"system": s, "role": roles.get(s, ("Not involved", ""))[0],
                 "detail": roles.get(s, ("Not involved", ""))[1]} for s in names]
     return {"impact": impact, "impact_units": round(abs(f.units)), "origin": origin, "handoff": handoff,
             "failure_type": failure_type, "failure_point": failure_point, "basis": basis, "systems": systems}
 
 
+# --- 1. Capture demand ----------------------------------------------------------
+
 def _r01(f, p, ev):
+    src = ev["source_system"]
     return _record(
-        f, "Over-production", "MIPS", "Planning logic",
-        "MIPS inventory netting applied carried-in inventory to the first order line instead of the "
-        "SKU's total demand.", "certain",
-        {"MIPS": ("Misfired", f"Netted {_n(ev['inventory'])} units of inventory against line 1 "
-                              f"({_n(ev['first_line_qty'])}) only, so it asks for {_n(ev['first_line_only_requirement'])} "
-                              f"instead of {_n(ev['consolidated_requirement'])} across all lines."),
-         "ODI": ("Affected", f"Production is sized from the MIPS requirement: up to {_n(f.units)} units more "
-                             f"than the SKU needs.")})
+        f, "Under-production", "Integration", "Missing transaction",
+        f"The {src} → ODI interface did not deliver {ev['demand_line']}.", "certain",
+        {src: ("Reference", f"Holds {ev['demand_line']}: {_n(ev['source_qty'])} units."),
+         "ODI": ("Affected", f"Has no mapping row for it; ODI maps {_n(ev['odi_demand'])} of "
+                             f"{_n(ev['total_demand'])} demand."),
+         "MIPS": ("Affected", f"Plans without these {_n(f.units)} units, so the work order is short by them.")},
+        handoff=f"{src} → ODI")
 
 
 def _r02(f, p, ev):
+    src, more = ev["source_system"], f.units > 0
+    if _same(ev["mips_demand"], ev["demand_left"]):
+        mips = ("Reference", f"Already plans the current {_n(ev['demand_left'])} demand left.")
+        impact = "Traceability gap"
+    else:
+        mips = ("Affected", f"Plans {_n(ev['mips_demand'])} from ODI's figure: {_n(abs(f.units))} "
+                            f"{'short' if more else 'too many'}.")
+        impact = "Under-production" if more else "Over-production"
     return _record(
-        f, "Traceability gap", "MIPS", "Missing record",
-        "MIPS netted inventory out of demand without recording it as beginning inventory.", "certain",
-        {"MIPS": ("Misfired", f"Sent {_n(ev['odi_net_ordered_first_run'])} to production against "
-                              f"{_n(ev['mips_demand'])} demand, netting {_n(f.units)} as inventory, but its "
-                              f"beginning inventory is {_n(ev['mips_beginning_inventory_recorded'])}."),
-         "ODI": ("Affected", f"Ordered {_n(ev['odi_net_ordered_first_run'])}; nothing in ODI shows where the "
-                             f"other {_n(f.units)} units came from."),
-         "WMS": ("To check", "No ticket or freezer lot is tied to the netted units; one would prove they exist.")})
+        f, impact, "Integration", "Stale data",
+        f"The {ev['demand_line']} changed in {src} and the change never reached ODI.", "certain",
+        {src: ("Reference", f"Holds {_n(ev['source_qty'])} units for {ev['demand_line']}."),
+         "ODI": ("Affected", f"Still maps {_n(ev['odi_qty'])} on row {ev['odi_entry']}."), "MIPS": mips},
+        handoff=f"{src} → ODI")
 
 
 def _r03(f, p, ev):
+    src = ev["source_system"]
     return _record(
-        f, "Traceability gap", "MIPS", "Scheduling",
-        "MIPS scheduled a production line with zero demand (a blind line).", "certain",
-        {"MIPS": ("Misfired", f"Scheduled {f.description} in run {ev['run']} with zero demand."),
-         "ODI": ("Affected", "Carries the run with zero ordered and zero wrapped; inventory applied to it "
-                             "never reduces real demand.")})
+        f, "Over-production", "Integration", "Missing delete",
+        f"The {ev['demand_line']} was removed in {src}, but the ODI mapping kept it.", "certain",
+        {src: ("Reference", f"No longer has {ev['demand_line']}."),
+         "ODI": ("Affected", f"Still maps it on row {ev['odi_entry']}: {_n(ev['odi_qty'])} units."),
+         "MIPS": ("To check", f"Plans these {_n(ev['odi_qty'])} units if it follows ODI.")}, handoff=f"{src} → ODI")
 
 
-MOVED_TO = {"line": "another line", "day": "another production day", "sequence": "another run sequence"}
+# --- 3-5. MIPS demand and the work order ------------------------------------------
 
-
-def _r04(f, p, ev):
-    where = MOVED_TO.get(ev.get("moved_to_another", "line"), "another line")
+def _r04(f, p: SkuPosition | None, ev):
+    mips, left = ev["mips_demand"], ev["demand_left"]
+    impact = "Under-production" if f.units > 0 else "Over-production"
+    roles = {"BUSS": ("Reference", f"Orders total {_n(ev['sales_orders'])}."),
+             "Oracle": ("Reference", f"Forecast is {_n(ev['forecast'])}."),
+             "WMS": ("Reference", f"Has {_n(ev['wms_allocated'])} allocated to orders.")}
+    if p and _same(mips, p.odi_demand_left) and not _same(p.odi_demand, p.demand):
+        # MIPS did its arithmetic right on ODI's copy of the demand: the copy is what is wrong.
+        return _record(
+            f, impact, "Integration", "Stale data",
+            "MIPS planned from ODI's copy of the demand, which no longer matches BUSS and Oracle.", "certain",
+            {**roles, "ODI": ("Affected", f"Maps {_n(p.odi_demand)} of demand against {_n(ev['total_demand'])} in "
+                                          f"BUSS and Oracle."),
+             "MIPS": ("Affected", f"Plans {_n(mips)}, ODI's demand less allocated stock; it should be {_n(left)}.")},
+            handoff="BUSS/Oracle → ODI")
+    if p and not _same(p.odi_allocated, p.allocated) and _same(mips, max(0.0, p.demand - p.odi_allocated)):
+        return _record(
+            f, impact, "Integration", "Stale data",
+            "WMS changed its allocation and MIPS still plans from the allocation ODI carries.", "certain",
+            {**roles, "WMS": ("Reference", f"Has {_n(p.allocated)} allocated."),
+             "ODI": ("Affected", f"Shows {_n(p.odi_allocated)} allocated."),
+             "MIPS": ("Affected", f"Plans {_n(mips)} from the old allocation; it should be {_n(left)}.")},
+            handoff="WMS → ODI")
+    if _same(mips, ev["total_demand"]):
+        return _record(
+            f, impact, "MIPS", "Planning logic", "MIPS did not remove the stock WMS has already allocated.",
+            "certain",
+            {**roles, "MIPS": ("Misfired", f"Plans the full {_n(mips)} demand; less the {_n(ev['wms_allocated'])} "
+                                           f"allocated it is {_n(left)}."),
+             "ODI": ("Reference", f"Maps {_n(ev['odi_demand'])} of demand.")})
     return _record(
-        f, "Traceability gap", "MIPS", "Scheduling",
-        f"A run was moved to {where} and the original schedule entry was not removed.", "certain",
-        {"MIPS": ("Misfired", f"Moved the run ({ev['actual_run']}) but left the original entry "
-                              f"({ev['ghost_run']}) on the schedule."),
-         "ODI": ("Affected", f"Still holds a zero-quantity copy: {ev['ghost_run']}."),
-         "WMS": ("To check", "Work-order allocations may still point at the ghost run.")})
+        f, impact, "MIPS", "Stale data",
+        "MIPS demand does not match the current BUSS orders, Oracle forecast and WMS allocation: it was not "
+        "refreshed, or it was changed by hand.", "likely",
+        {**roles, "MIPS": ("Misfired", f"Plans {_n(mips)}; the sources leave {_n(left)}."),
+         "ODI": ("Reference", f"Maps {_n(ev['odi_demand'])} of demand.")})
 
 
 def _r05(f, p: SkuPosition | None, ev):
-    remaining = ev["need_after_first_run"]
-    if p and p.active_runs:
-        first = p.active_runs[0]
-        recovery_ordered = p.net_ordered - first.net_units_ordered
-        sized_wrong = recovery_ordered - remaining >= p.wrapped - p.consolidated_requirement
-    else:
-        recovery_ordered, sized_wrong = None, True
-    if sized_wrong:
+    wo, shortfall, left, avail = ev["work_order_qty"], ev["shortfall"], ev["demand_left"], ev["wms_available"]
+    impact = "Over-production" if f.units < 0 else "Under-production"
+    wms = ("Reference", f"Has {_n(avail)} available and {_n(ev['wms_allocated'])} allocated.")
+    odi = ("Affected", f"Mixes batches for work order {ev['work_orders']} at the MIPS quantity.")
+    if not _same(ev["mips_demand"], left):
+        if p and _same(ev["mips_demand"], p.odi_demand_left) and not _same(p.odi_demand, p.demand):
+            return _record(
+                f, impact, "Integration", "Stale data",
+                "The work order was sized from ODI's copy of the demand, which no longer matches BUSS and Oracle.",
+                "certain",
+                {"MIPS": ("Affected", f"Plans {_n(wo)} on the work order; the shortfall is {_n(shortfall)}."),
+                 "WMS": wms, "ODI": ("Affected", f"Maps {_n(p.odi_demand)} of demand against {_n(ev['total_demand'])}.")},
+                handoff="BUSS/Oracle → ODI")
         return _record(
-            f, "Over-production", "MIPS", "Planning logic",
-            "The recovery run was sized to the order again instead of the shortfall left by run 1 "
-            "(demand counted twice).", "certain",
-            {"MIPS": ("Misfired", f"Ordered {_n(recovery_ordered) if recovery_ordered is not None else 'more'} on the "
-                                  f"recovery run when {_n(remaining)} were still needed."),
-             "ODI": ("Affected", f"Ordered {_n(ev['net_ordered_all_runs'])} and wrapped {_n(ev['wrapped_all_runs'])} "
-                                 f"across runs against {_n(ev['demand'])} demand."),
-             "WMS": ("To check", f"Will receive the {_n(f.units)} surplus units; they need a next-day or freezer "
-                                 f"destination.")}, handoff="MIPS → ODI")
+            f, impact, "MIPS", "Planning logic",
+            "The work order follows a MIPS demand figure that is itself wrong (see the R04 flag).", "likely",
+            {"MIPS": ("Misfired", f"Plans {_n(wo)} on the work order; the shortfall is {_n(shortfall)}."),
+             "WMS": wms, "ODI": odi})
+    if avail and _same(wo, left):
+        point, basis = ("MIPS sized the work order to the demand left without subtracting the stock available "
+                        "in WMS."), "certain"
+    elif shortfall == 0:
+        point, basis = "MIPS raised a work order although WMS stock covers the demand left.", "certain"
+    else:
+        point, basis = "The MIPS work order was set to a quantity other than the shortfall.", "likely"
     return _record(
-        f, "Over-production", "ODI", "Production execution",
-        "The runs wrapped more than they were ordered to make.", "certain",
-        {"ODI": ("Misfired", f"Wrapped {_n(ev['wrapped_all_runs'])} across runs against "
-                             f"{_n(ev['net_ordered_all_runs'])} ordered."),
-         "MIPS": ("Reference", f"Demand is {_n(ev['demand'])}; {_n(remaining)} were still needed after run 1."),
-         "WMS": ("To check", f"Will receive the {_n(f.units)} surplus units.")})
+        f, impact, "MIPS", "Planning logic", point, basis,
+        {"MIPS": ("Misfired", f"Plans {_n(wo)} on work order {ev['work_orders']}; {_n(left)} demand left less "
+                              f"{_n(avail)} available is {_n(shortfall)}."),
+         "WMS": wms, "ODI": odi})
 
 
 def _r06(f, p, ev):
     return _record(
-        f, "Stranded surplus", "MIPS", "Carry-forward",
-        "MIPS did not carry the surplus forward as the next sales day's beginning inventory.", "certain",
-        {"MIPS": ("Misfired", f"Has not carried the {_n(f.units)}-unit surplus to the next sales day; next "
-                              f"day's requirement will not be reduced by it."),
-         "ODI": ("Reference", f"Wrapped {_n(ev['wrapped'])} and reports {_n(ev['odi_expected_ending_inventory'])} "
-                              f"expected ending inventory."),
-         "WMS": ("To check", f"Holds the {_n(f.units)} surplus units physically; confirm them before they are "
-                             f"carried or frozen.")})
+        f, "Under-production", "MIPS", "Missing record", "MIPS has no work order for a shortfall.", "certain",
+        {"MIPS": ("Misfired", f"No work order, but the SKU is {_n(ev['shortfall'])} short."),
+         "WMS": ("Reference", f"Has {_n(ev['wms_available'])} available and {_n(ev['wms_allocated'])} allocated."),
+         "ODI": ("To check", f"Maps the demand to {ev['odi_work_orders']}." if ev.get("odi_work_orders") else
+                             "Maps the demand to no work order.")})
 
+
+# --- 5. Work order to ODI, every line covered -------------------------------------
 
 def _r07(f, p, ev):
-    supply = p.usable_supply if p else None
+    if "odi_work_order" in ev:
+        return _record(
+            f, "Traceability gap", "Integration", "Missing transaction",
+            f"ODI links demand to work order {ev['odi_work_order']}, which MIPS does not have.", "likely",
+            {"MIPS": ("Reference", f"Has work orders: {ev['mips_work_orders'] or 'none'}."),
+             "ODI": ("Affected", f"Maps {_n(ev['odi_rows'])} rows to {ev['odi_work_order']}.")},
+            handoff="MIPS → ODI")
     return _record(
-        f, "Overstated inventory", "WMS", "Missing transaction",
-        "WMS shipped stock (usually freezer or prior-day tickets) without a transaction MIPS can see.",
-        "likely",
-        {"WMS": ("Misfired", f"Allocated the full {_n(ev['wms_allocated'])} units, {_n(f.units)} more than "
-                             f"production and applied inventory cover"
-                             + (f" ({_n(supply)} of {_n(ev['demand'])})." if supply is not None else ".")),
-         "MIPS": ("Affected", f"Does not see the {_n(f.units)} units drawn, so its freezer and inventory "
-                              f"balances stay overstated."),
-         "ODI": ("Reference", f"Wrapped {_n(ev['wrapped'])}"
-                              + (f", of which {_n(ev['returned_to_plant'])} went back to the plant." if
-                                 ev.get("returned_to_plant") else "."))})
+        f, "Under-production" if f.units > 0 else "Over-production", "Integration", "Stale data",
+        f"MIPS changed work order {ev['work_order']} and the new quantity never reached ODI.", "certain",
+        {"MIPS": ("Reference", f"Work order quantity {_n(ev['mips_work_order_qty'])}."),
+         "ODI": ("Affected", f"{_n(ev['odi_rows_stale'])} rows still carry {_n(ev['odi_work_order_qty'])}.")},
+        handoff="MIPS → ODI")
 
 
 def _r08(f, p, ev):
     return _record(
-        f, "Stranded surplus", "MIPS", "Scheduling",
-        "MIPS kept a run on the schedule although inventory already exceeds demand.", "certain",
-        {"MIPS": ("Misfired", f"Kept a run scheduled although inventory exceeds the {_n(ev['demand'])} demand "
-                              f"by {_n(f.units)}."),
-         "ODI": ("Affected", f"Shows a negative net order ({_n(-abs(f.units))}): the run is not needed."),
-         "WMS": ("To check", f"Confirm the {_n(f.units)} surplus units exist before they are carried forward.")})
-
-
-def _when(value) -> str:
-    try:
-        return f"{dt.datetime.fromisoformat(str(value)):%m/%d %H:%M}"
-    except ValueError:
-        return str(value)
+        f, "Short shipment", "ODI", "Missing link",
+        f"ODI mapped the {ev['demand_line']} to no work order, and it has no allocated stock.", "likely",
+        {"ODI": ("Misfired", f"Row {ev['odi_entry']}: {_n(ev['odi_qty'])} units, {_n(ev['allocated'])} allocated, "
+                             f"no work order."),
+         "MIPS": ("To check", f"Work orders: {ev['mips_work_orders'] or 'none'}."),
+         "WMS": ("To check", "Stock could be allocated to the order instead.")})
 
 
 def _r09(f, p, ev):
-    mips, wms, gap = ev["mips_demand_sales_date"], ev["wms_order_qty"], abs(f.units)
-    more = f.units < 0   # MIPS plans more than WMS has on order
-    impact = "Over-production" if more else "Under-production"
-    when = f" (last modified {_when(ev['mips_last_modified'])})" if ev.get("mips_last_modified") else ""
-    odi_detail = (f"Production is sized to the MIPS figure: {_n(gap)} more than WMS has on order." if more else
-                  f"Production is sized to the MIPS figure: {_n(gap)} short of the WMS order.")
-    # The WMS report itself shows the customer orders changed after they were placed ('Original Ord Qty'),
-    # and MIPS still plans the original total: the change never reached MIPS. The data proves it.
-    original = ev.get("wms_original_order_qty")
-    if original is not None and original == mips:
-        return _record(
-            f, impact, "MIPS", "Stale data",
-            f"The customer orders changed in WMS after they were placed ({_n(original)} → {_n(wms)}); "
-            f"MIPS still plans the original {_n(mips)}{when}.", "certain",
-            {"MIPS": ("Misfired", f"Still plans the original {_n(mips)}; WMS has {_n(wms)} on order."),
-             "WMS": ("Reference", f"Holds the changed customer orders: {_n(wms)} (originally {_n(original)}): "
-                                  f"{ev.get('wms_orders_changed', '')}."),
-             "ODI": ("Affected", odi_detail)}, handoff="WMS → MIPS")
-    # Demand MIPS changed after production was ordered, in the direction of the gap, means MIPS itself
-    # moved (a planning change), not that WMS moved while MIPS was not refreshed.
-    changed = p.demand_after_order if p else 0
-    if changed and (changed > 0) == more:
-        odi = ("To check", f"Production was ordered against {_n(p.demand_at_order)} demand, before MIPS changed by "
-                           f"{changed:+,.0f}; check that no run is resized to MIPS's {_n(mips)}.")
-        return _record(
-            f, impact, "MIPS", "Planning change",
-            f"MIPS demand {'rose' if changed > 0 else 'fell'} by {_n(abs(changed))} after production was ordered"
-            f"{when}, with no matching change to the customer orders in WMS.", "likely",
-            {"MIPS": ("Misfired", f"Plans {_n(mips)}, {_n(gap)} {'more' if more else 'less'} than the {_n(wms)} "
-                                  f"on order in WMS."),
-             "WMS": ("Reference", f"Holds the current customer orders: {_n(wms)}."), "ODI": odi})
-    if more:
-        cause = f"MIPS plans more than the customers have on order in WMS; it was not refreshed{when}."
-    else:
-        cause = f"The customer order changed in WMS after MIPS last synced{when}."
     return _record(
-        f, impact, "MIPS", "Stale data", cause, "likely",
-        {"MIPS": ("Misfired", f"Still plans {_n(mips)}; WMS has {_n(wms)} on order."),
-         "WMS": ("Reference", f"Holds the current customer orders: {_n(wms)}."),
-         "ODI": ("Affected", odi_detail)}, handoff="WMS → MIPS")
+        f, "Traceability gap", "Integration", "Stale data",
+        "The allocation in ODI does not match what WMS has reserved for orders.", "likely",
+        {"WMS": ("Reference", f"Has {_n(ev['wms_allocated'])} allocated (WMS holds all on-hand stock)."),
+         "ODI": ("Affected", f"Shows {_n(ev['odi_allocated'])} allocated."),
+         "MIPS": ("To check", "Its demand left is sized from the allocated figure.")}, handoff="WMS → ODI")
 
+
+# --- 4, 7, 8. Stock, batches, wrap time, master data ---------------------------------
 
 def _r10(f, p, ev):
-    order, alloc, wrapped = ev["wms_order_qty"], ev["wms_allocated"], ev["wrapped"]
-    available = wrapped + (p.implied_inventory if p else 0)
-    if available >= order or not p:
-        return _record(
-            f, "Short shipment", "WMS", "Allocation",
-            "WMS allocated less than it has on hand: a returned or damaged ticket not netted, or a stale "
-            "workstation.", "likely",
-            {"WMS": ("Misfired", f"Allocated {_n(alloc)} of {_n(order)} for {ev['short_customers']}."),
-             "ODI": ("Reference", f"Wrapped {_n(wrapped)}, enough for the order.")})
-    if p.demand_current < order:
-        return _record(
-            f, "Short shipment", "MIPS", "Stale data",
-            "Production was planned for less than WMS has on order, so there is not enough to allocate.",
-            "likely",
-            {"MIPS": ("Misfired", f"Planned {_n(p.demand_current)} against {_n(order)} on order in WMS."),
-             "ODI": ("Affected", f"Wrapped {_n(wrapped)}, sized to the MIPS plan."),
-             "WMS": ("Reference", f"Allocated {_n(alloc)} of {_n(order)}; {_n(f.units)} short for "
-                                  f"{ev['short_customers']}.")}, handoff="WMS → MIPS")
     return _record(
-        f, "Short shipment", "ODI", "Production execution",
-        "The plant wrapped less than MIPS planned, so WMS cannot allocate the full order.", "likely",
-        {"ODI": ("Misfired", f"Wrapped {_n(wrapped)}, short of the {_n(p.consolidated_requirement)} requirement."),
-         "MIPS": ("Reference", f"Planned {_n(p.demand_current)}."),
-         "WMS": ("Affected", f"Allocated {_n(alloc)} of {_n(order)}; {_n(f.units)} short for "
-                             f"{ev['short_customers']}.")})
+        # Less on hand than available + allocated: WMS offers stock that is not there. More: units no
+        # order or availability accounts for (on hold, damaged, not booked).
+        f, "Overstated inventory" if f.units < 0 else "Traceability gap", "WMS", "Inventory balance",
+        "WMS on hand does not equal available plus allocated: a count or a transaction is wrong.", "undetermined",
+        {"WMS": ("Misfired", f"{ev['inventory']}: on hand {_n(ev['on_hand'])}, available {_n(ev['available'])}, "
+                             f"allocated {_n(ev['allocated'])}."),
+         "MIPS": ("To check", "The shortfall is sized from the available figure.")})
 
 
 def _r11(f, p, ev):
+    diff = ev["mixed"] - ev["scheduled"]
     return _record(
-        f, "Data integrity", "Undetermined", "Master data",
-        "MIPS and WMS carry different units per container for the item; the Oracle item master decides "
-        "which is right.", "undetermined",
-        {"MIPS": ("Conflicting", f"{_n(ev['mips_units_per_container'])} units per container."),
-         "WMS": ("Conflicting", f"{_n(ev['wms_units_per_container'])} units per container.")})
+        f, "Over-production" if diff > 0 else "Under-production", "ODI", "Production execution",
+        "The plant mixed a different number of batches than MIPS scheduled, with no recorded reason.", "certain",
+        {"ODI": ("Misfired", f"Mixed {_n(ev['mixed'])} batches against {_n(ev['scheduled'])} scheduled on "
+                             f"{ev['line']}."),
+         "MIPS": ("Reference", f"Scheduled {_n(ev['scheduled'])} batches for {ev['work_order']}."),
+         **({"WMS": ("To check", "Extra output will arrive that no order is waiting for.")} if diff > 0 else {})})
 
 
 def _r12(f, p, ev):
     return _record(
-        f, "Traceability gap", "WMS", "Missed scan",
-        "Orders were marked shipped without a trailer load scan.", "certain",
-        {"WMS": ("Misfired", f"{_n(ev['orders'])} of {_n(ev['of_total_orders'])} orders "
-                             f"({_n(ev['shipped_units'])} units) show Shipped with Loaded = 0."),
-         "Oracle": ("To check", "Confirm the ship transactions posted within the 10-minute window.")})
+        f, "Short shipment", "ODI", "Production execution",
+        f"Wrapping for work order {ev['work_order']} ended after the requested ship date.", "likely",
+        {"ODI": ("Misfired", f"Wrapping ended {ev['wrapping_end']}; earliest ship date {ev['earliest_ship_date']}."),
+         "MIPS": ("To check", "Check whether the work order was scheduled too late."),
+         "WMS": ("Affected", f"Cannot ship {_n(f.units)} units of {_n(ev['late_orders'])} orders on time.")})
 
 
 def _r13(f, p, ev):
-    if "fill_rate_total" in ev:
-        detail = (f"Fill Rate report totals {_n(ev['fill_rate_total'])}; Order Summary by Item totals "
-                  f"{_n(ev['item_summary_total'])}.")
-    else:
-        detail = f"Printed subtotal {_n(ev['printed_total'])}; the customer lines add up to {_n(ev['sum_of_lines'])}."
     return _record(
-        f, "Data integrity", "WMS", "Report extract",
-        "Two WMS views of the same orders do not add up: a line is missing from one extract or changed "
-        "between report runs.", "certain", {"WMS": ("Misfired", detail)})
-
-
-def _r14(f, p, ev):
-    diff = ev["mixed"] - ev["scheduled"]
-    return _record(
-        f, "Over-production" if diff > 0 else "Under-production", "ODI", "Production execution",
-        "The plant mixed a different number of batches than MIPS scheduled, with no recorded reason.",
-        "certain",
-        {"ODI": ("Misfired", f"Mixed {_n(ev['mixed'])} batches against {_n(ev['scheduled'])} scheduled on "
-                             f"{ev['line']}."),
-         "MIPS": ("Reference", f"Scheduled {_n(ev['scheduled'])} batches."),
-         **({"WMS": ("To check", f"About {_n(ev['approx_extra_pieces'])} extra pieces will arrive unplanned.")}
-            if diff > 0 else {})})
-
-
-def _r15(f, p, ev):
-    return _record(
-        f, "Data integrity", "MIPS", "Interface formatting",
-        "The BUSS interface pads the FG Oracle Ref, so exact-match joins between systems fail.", "certain",
-        {"MIPS": ("Misfired", f"{_n(ev['lines_with_padding'])} of {_n(ev['of_lines'])} lines carry a padded "
-                              f"FG Oracle Ref."),
-         "ODI": ("Affected", "Exact-match joins to MIPS keys fail; the agent normalises keys meanwhile."),
-         "WMS": ("Affected", "Exact-match joins to MIPS keys fail; the agent normalises keys meanwhile.")},
-        handoff="BUSS → MIPS")
-
-
-def _r16(f, p, ev):
-    return _record(
-        f, "Over-production" if f.units > 0 else "Under-production", "Integration", "Interface lag",
-        "The MIPS → ODI interface did not deliver the current sales-order quantity.", "certain",
-        {"MIPS": ("Reference", f"Sales orders total {_n(ev['mips_sales_order_qty'])}."),
-         "ODI": ("Affected", f"Holds {_n(ev['odi_mips_order_qty'])} as the MIPS order quantity.")},
-        handoff="MIPS → ODI")
-
-
-def _r17(f, p, ev):
-    if ev.get("metric") == "wrap overrun %":
-        return _record(
-            f, "Over-production" if f.units > 0 else "Under-production", "ODI", "Data entry or over-run",
-            "A run's wrapped count is far from what it was ordered to make: a keying error or a real "
-            "over-run.", "undetermined",
-            {"ODI": ("Misfired", f"Run {ev['run']} wrapped {_n(ev['wrapped'])} against {_n(ev['ordered'])} "
-                                 f"ordered ({ev['value']}; plant median {ev['plant_median']})."),
-             "WMS": ("To check", "The received ticket quantity shows which count is real.")})
-    return _record(
-        f, "Data integrity", "ODI", "Data entry",
-        "A batch's final piece variance is far from the plant median: check scaling and scrap entries.",
+        f, "Data integrity", "Undetermined", "Master data",
+        "Systems use different codes for the same item; the Oracle item master decides which is right.",
         "undetermined",
-        {"ODI": ("Misfired", f"{ev['formula']} on {ev['line']}: final piece variance {_n(ev['value'])} "
-                             f"(plant median {_n(ev['plant_median'])}).")})
-
-
-def _r18(f, p, ev):
-    waited = f"{_n(ev['minutes_waiting'])} minutes"
-    if ev.get("oracle_status") == "not received":
-        return _record(
-            f, "Financial posting gap", "Integration", "Missing transaction",
-            "The WMS → Oracle interface never delivered the transaction.", "certain",
-            {"WMS": ("Reference", f"Recorded {ev['wms_transaction']} at {ev['wms_time']}."),
-             "Oracle": ("Affected", f"Has no transaction for it after {waited}.")}, handoff="WMS → Oracle")
-    why = ev["oracle_status"] + (f": {ev['oracle_error']}" if ev.get("oracle_error") else "")
-    return _record(
-        f, "Financial posting gap", "Oracle", "Posting rejected",
-        "Oracle received the WMS transaction and rejected it.", "certain",
-        {"WMS": ("Reference", f"Recorded {ev['wms_transaction']} at {ev['wms_time']}."),
-         "Oracle": ("Misfired", f"Rejected it ({why}); unposted after {waited}.")}, handoff="WMS → Oracle")
-
-
-def _r19(f, p, ev):
-    return _record(
-        f, "Overstated inventory", "WMS", "Missing update",
-        "WMS booked a return to the plant but did not reduce the ticket's received quantity.", "certain",
-        {"WMS": ("Misfired", f"Booked {_n(ev['returned_by_transactions'])} returned on ticket {ev['ticket']}, "
-                             f"but the ticket still shows {_n(ev['net_received_on_ticket'])} net received, "
-                             f"not {_n(ev['net_received_should_be'])}."),
-         "MIPS": ("Affected", f"The {_n(f.units)} returned units are missing from the production requirement "
-                              f"until the ticket is corrected.")})
+        {"Oracle": ("Reference", "The item master is the system of record."),
+         "BUSS": ("Conflicting", f"FG BUSS Code {ev['buss_codes'] or 'none'}."),
+         "MIPS": ("Conflicting", f"FG BUSS Code {ev['mips_buss_codes'] or 'none'}."),
+         "ODI": ("To check", ev["issues"])})
 
 
 BY_RULE = {"R01": _r01, "R02": _r02, "R03": _r03, "R04": _r04, "R05": _r05, "R06": _r06, "R07": _r07,
-           "R08": _r08, "R09": _r09, "R10": _r10, "R11": _r11, "R12": _r12, "R13": _r13, "R14": _r14,
-           "R15": _r15, "R16": _r16, "R17": _r17, "R18": _r18, "R19": _r19}
+           "R08": _r08, "R09": _r09, "R10": _r10, "R11": _r11, "R12": _r12, "R13": _r13}
 
 
 def attribute(f: Finding, p: SkuPosition | None = None) -> dict:
@@ -364,7 +272,7 @@ def attribute(f: Finding, p: SkuPosition | None = None) -> dict:
         # A rule without a mapping, or evidence missing a field: say so rather than guess.
         return _record(f, "Data integrity", "Undetermined", "Not mapped",
                        "No accountability mapping for this rule's evidence; see the evidence below.",
-                       "undetermined", {s: ("To check", "") for s in f.systems if s in SYSTEMS})
+                       "undetermined", {s: ("To check", "") for s in f.systems if s in SYSTEMS + OPTIONAL})
 
 
 def assign(findings: list[Finding], positions: dict[str, SkuPosition]) -> None:

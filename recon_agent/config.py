@@ -6,37 +6,27 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
-# The five daily source extracts live in data/ (one file per source per sales day).
+# The source workbook (the business team's 9 Nov mapping, one sheet per source) is found anywhere
+# under data/ (see docs/DATA_MODEL_9NOV.md).
 DATA_DIR = Path(os.environ.get("RECON_DATA_DIR", PROJECT_ROOT / "data"))
 OUTPUT_DIR = PROJECT_ROOT / "output"
+WORKBOOK_GLOB = os.environ.get("RECON_WORKBOOK_GLOB", "**/BIMBO_MIPS_WMS_ODI_Data*.xlsx")
 
-# Source of the data: "excel" reads the five extracts in DATA_DIR; "events" projects the
-# simulated event log (recon_agent/events, docs/EVENT_CONTRACT.md). Event mode keeps its log,
-# planner decisions and reports in output/sim/, so simulated decisions never shift the
-# rule confidence learned on real data.
+# Source of the data: "excel" reads the workbook in DATA_DIR; "events" projects the simulated
+# event log (recon_agent/events, docs/EVENT_CONTRACT.md). Event mode keeps its log, planner
+# decisions and reports in output/sim/, so simulated decisions never shift the rule confidence
+# learned on real data.
 SOURCE_MODE = os.environ.get("RECON_SOURCE", "excel").strip().lower()
 SIM_DIR = OUTPUT_DIR / "sim"
 EVENT_DB = Path(os.environ.get("RECON_EVENT_DB", SIM_DIR / "events.db"))
 REPORT_DIR = SIM_DIR if SOURCE_MODE == "events" else OUTPUT_DIR
 FEEDBACK_FILE = Path(os.environ.get("RECON_FEEDBACK_FILE", REPORT_DIR / "feedback.json"))
 
-# Glob patterns for each source extract (one file per source per sales day).
-SOURCES = {
-    "mips_orders": "MIPS Order Data*.xlsx",
-    "odi_batches": "ODI Batch Data*.xlsx",
-    "odi_finished_goods": "ODI Finished Good Data*.xlsx",
-    "wms_fill_rate": "WMS - Fill Rate Report*.xlsx",
-    "wms_order_summary": "WMS - Order Summary Report by Item*.xlsx",
-}
-
 # Detection thresholds.
-QTY_TOLERANCE_UNITS = 0          # MIPS vs WMS order qty must match exactly
-CARRYOVER_MIN_UNITS = 50         # ignore trivial end-of-run excess
-OVERPRODUCTION_MIN_UNITS = 100   # recovery-run over-build worth flagging
-ROBUST_Z_THRESHOLD = 3.5         # MAD-based outlier cut-off
-ORACLE_POSTING_SLA_MINUTES = 10  # R18: a WMS transaction must post in Oracle within this (plant time)
+QTY_TOLERANCE_UNITS = 0          # quantities must match exactly between systems
+HIGH_UNITS = 1000                # a quantity rule is High at this many units or more
 
-# Default retail price used for $ exposure when a SKU has none in MIPS.
+# Retail price used for $ exposure when a SKU's sales orders carry none.
 DEFAULT_UNIT_PRICE = 3.99
 
 # Worklist (web UI) settings.
@@ -51,8 +41,9 @@ DAY_CODES = {
     5: ("SAT", "#f2c230", "#16191d"),
     6: ("SUN", "#6a46a8", "#ffffff"),
 }
-SALES_WEEKDAYS = (0, 1, 2, 3, 4, 5)   # unconfirmed; drives "next sales day" for carry-forward
-CARRY_FORWARD_RULES = ("R05", "R06", "R08")
+SALES_WEEKDAYS = (0, 1, 2, 3, 4, 5)   # unconfirmed; drives "next sales day" on the worklist
+# Surplus stays in WMS (all on-hand stock is kept there), so no rule carries units forward any more.
+CARRY_FORWARD_RULES: tuple[str, ...] = ()
 HIGH_ACK_MINUTES = 15
 WEB_POLL_SECONDS = 20        # fallback poll; open screens normally hear of changes by server push
 WEB_WATCH_SECONDS = 0.5 if SOURCE_MODE == "events" else 2.0   # how often the server checks the feed

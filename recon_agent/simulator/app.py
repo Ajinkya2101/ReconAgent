@@ -31,7 +31,7 @@ from fastapi.templating import Jinja2Templates
 from .. import __version__, config, security, sources, users
 from ..events import contract, scenarios, seed
 from ..events.clock import SimClock, parse_duration
-from ..events.derive import DERIVED, derive, order_totals
+from ..events.derive import DERIVED, derive
 from ..events.log import FAULT_KINDS, Change, Event, EventLog
 from ..events.projector import Projector
 
@@ -43,7 +43,7 @@ RATES = (1, 10, 60, 300)
 OIC_MODES = {"accept": "Accept and apply", "reject": "Reject every correction", "down": "Unavailable (503)"}
 FAULT_PRESETS = (
     ("Stale WMS feed", "Every WMS change reaches the worklist 60 s late", {"kind": "delay", "source": "WMS", "seconds": "60"}),
-    ("Lose the next Oracle posting", "The next Oracle change never arrives", {"kind": "drop", "source": "ORACLE", "count": "1"}),
+    ("Lose the next BUSS order", "The next BUSS change never arrives", {"kind": "drop", "source": "BUSS", "count": "1"}),
     ("At-least-once delivery", "Every change arrives twice, the copy 3 s later", {"kind": "duplicate", "seconds": "3"}),
     ("Out-of-order delivery", "Changes arrive in batches of 3, newest first", {"kind": "reorder", "batch": "3"}),
 )
@@ -103,7 +103,7 @@ def describe(ev: Event) -> list[tuple[str, str, str]]:
 
 
 def next_key(e: contract.Entity, keys: list[str]) -> str:
-    """The next free key in the entity's own pattern (ML-0018, 9900005, ...)."""
+    """The next free key in the entity's own pattern (ODI-0022, WO-UBD-20260912-004, ...)."""
     best = None
     for k in keys:
         m = re.fullmatch(r"(.*?)(\d+)", k)
@@ -195,7 +195,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
     def ctx(request: Request, e: contract.Entity | None = None, page: str = "table", **extra) -> dict:
         projector.catch_up()
-        e = e or contract.ENTITIES["mips.order_line"]
+        e = e or contract.ENTITIES["buss.sales_order"]
         return {"e": e, "page": page, "rows": projector.rows(e.name), "row_seq": projector.row_seq[e.name],
                 "counts": {n: len(t) for n, t in projector.tables.items()}, "clock": clock, "now": clock.now(),
                 "status": status(), "feed": log.source_tail(30)[::-1], "head": projector.seq,
@@ -274,7 +274,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     @app.get("/")
     def home(request: Request):
         operator(request)
-        return RedirectResponse("/t/mips.order_line", status_code=303)
+        return RedirectResponse("/t/buss.sales_order", status_code=303)
 
     @app.get("/t/{entity}", response_class=HTMLResponse)
     def table_page(request: Request, entity: str, key: str = "", new: str = ""):
@@ -369,23 +369,6 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             return editor(request, e, key, error=str(err))
         return editor(request, e, None, mode="none", message=f"Deleted {key}. " + published(ev), oob=True)
 
-    @app.post("/t/wms.order/recalc/{key}", response_class=HTMLResponse)
-    def recalc_order(request: Request, key: str):
-        """Rebuild an order header's quantities from its customer's item lines (clears an R13 mismatch)."""
-        who = operator(request)
-        e = contract.ENTITIES["wms.order"]
-        projector.catch_up()
-        current = projector.tables[e.name].get(key)
-        if current is None:
-            return editor(request, e, key)
-        values = derive(e.name, {**current, **order_totals(projector.rows("wms.item_order"),
-                                                             current["Ship to Name"])})
-        changed = {c_: contract.to_json(v) for c_, v in values.items() if v != current[c_]}
-        ev = log.publish(Change(e.name, "U", key, changed, note="Order totals rebuilt from item lines"),
-                         f"{PRODUCER}:{who}", clock.now())
-        return editor(request, e, key, message=published(ev) if ev
-                      else "Order totals already match the item lines.", oob=True)
-
     # --- clock, reset, live refresh ---------------------------------------------
     @app.post("/clock", response_class=HTMLResponse)
     def control_clock(request: Request, action: str = Form(...), value: str = Form("")):
@@ -411,10 +394,10 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         operator(request)
         log.reset()
         seed.seed(log, dt.date.fromisoformat(sales_date))
-        return Response(status_code=204, headers={"HX-Redirect": "/t/mips.order_line"})
+        return Response(status_code=204, headers={"HX-Redirect": "/t/buss.sales_order"})
 
     @app.get("/poll", response_class=HTMLResponse)
-    def poll(request: Request, entity: str = "mips.order_line", seen: int = 0, page: str = "table"):
+    def poll(request: Request, entity: str = "buss.sales_order", seen: int = 0, page: str = "table"):
         """Every 2 s: feed, clock and worklist status; the table too when the source moved."""
         operator(request)
         e = entity_or_404(entity)
@@ -522,7 +505,8 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     async def receive_correction(request: Request):
         """Stand-in for Oracle Integration receiving an approved correction from the worklist.
 
-        Body: {correction_id, flag_id, requested_by, entity, op ("U" or "I"), key, expected, changes}.
+        Body: {correction_id, flag_id, requested_by, entity, op ("U", "I" or "D"), key, expected, changes,
+        rows}. `rows` ([{key, expected}]) are more rows that take the same change in one transaction.
         202 when applied (the change then travels the integration like any other), 409 when the
         row no longer has the values the correction was computed from, 422 when rejected, 503
         when the endpoint is set to unavailable.
@@ -542,18 +526,29 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             note = f"Correction {body.get('correction_id')} for {body.get('flag_id')}, approved by {body.get('requested_by')}"
             if op == "I":
                 row = derive(e.name, contract.validate(e, changes), now=now)
-                change = Change(e.name, "I", str(row[e.key]), contract.encode(row), note=note)
+                batch = [Change(e.name, "I", str(row[e.key]), contract.encode(row), note=note)]
             else:
-                current = log.current(e.name, key)
-                if current is None:
-                    return JSONResponse({"error": f"{e.name} {key} does not exist"}, status_code=404)
-                stale = {c: current.get(c) for c, v in (body.get("expected") or {}).items() if current.get(c) != v}
-                if stale:
-                    return JSONResponse({"error": "the row changed since the correction was computed",
-                                         "current": stale}, status_code=409)
-                merged = contract.encode(derive(e.name, contract.validate(e, {**current, **changes}), now=now))
-                change = Change(e.name, "U", key, {c: v for c, v in merged.items() if v != current.get(c)}, note=note)
-            ev = log.publish(change, "oic:corrections", now)
+                # The flagged row, plus any rows that take the same change in the same transaction
+                # (every ODI row of one work order). Each must still hold what the proposal saw.
+                targets = [(key, body.get("expected") or {})] + [
+                    (str(r.get("key") or ""), r.get("expected") or {}) for r in body.get("rows") or []]
+                batch = []
+                for k, expected in targets:
+                    current = log.current(e.name, k)
+                    if current is None:
+                        return JSONResponse({"error": f"{e.name} {k} does not exist"}, status_code=404)
+                    stale = {c: current.get(c) for c, v in expected.items() if current.get(c) != v}
+                    if stale:
+                        return JSONResponse({"error": "the row changed since the correction was computed",
+                                             "current": stale, "key": k}, status_code=409)
+                    if op == "D":
+                        batch.append(Change(e.name, "D", k, note=note))
+                        continue
+                    merged = contract.encode(derive(e.name, contract.validate(e, {**current, **changes}), now=now))
+                    batch.append(Change(e.name, "U", k, {c: v for c, v in merged.items() if v != current.get(c)},
+                                        note=note))
+            published_events = [ev for ev in log.publish_many(batch, "oic:corrections", now) if ev]
+            ev = published_events[0] if published_events else None
         except (KeyError, contract.ContractError, ValueError) as err:
             return JSONResponse({"error": str(err)}, status_code=422)
         return JSONResponse({"status": "accepted", "source_seq": ev.source_seq if ev else None,

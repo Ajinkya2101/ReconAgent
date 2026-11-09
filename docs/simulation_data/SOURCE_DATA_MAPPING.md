@@ -1,5 +1,7 @@
 # Client Extracts vs Simulation Data: Mapping and Data Flow
 
+> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL_9NOV.md](../DATA_MODEL_9NOV.md) and [EVENT_CONTRACT.md](../EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
+
 How the simulation's dummy data maps to the five client extracts in `data/`, how closely it matches them, and how data flows from either source to the worklist.
 
 **Compared:** the five extracts for Saturday 12 Sep 2026 (`MIPS Order Data`, `ODI Finished Good Data`, `ODI Batch Data`, `WMS - Fill Rate Report`, `WMS - Order Summary Report by Item`) against the seeded starting day (`recon_agent/events/seed.py`). Every column was profiled on 03 Nov 2026: names, order, types, empty values, value formats and the formulas between columns.

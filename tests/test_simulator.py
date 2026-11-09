@@ -51,7 +51,8 @@ with mock.patch.object(security, "PBKDF2_ITERATIONS", 1000):   # an accounts fil
     if not users.get("ana"):
         users.add("ana", "Ana", "supervisor", PASSWORD)
 
-NOW = dt.datetime(2026, 11, 6, 20, 0)
+NOW = dt.datetime(2026, 9, 11, 20, 0)
+WO1 = seed.wo_number(seed.DEFAULT_SALES_DATE, 1)
 
 
 def seeded_log() -> EventLog:
@@ -92,71 +93,52 @@ class SimulatorTest(unittest.TestCase):
 
     def test_requires_an_operator(self):
         anon = TestClient(create_app(self.log.path))
-        r = anon.get("/t/wms.order", follow_redirects=False)
+        r = anon.get("/t/wms.inventory", follow_redirects=False)
         self.assertEqual(r.status_code, 303)
 
     def test_unchanged_form_publishes_nothing(self):
         head = self.log.position()[1]
-        r = self.client.post("/t/odi.finished_good/edit/FG-0008", data=self.form("odi.finished_good", "FG-0008"))
+        r = self.client.post(f"/t/mips.work_order/edit/{WO1}", data=self.form("mips.work_order", WO1))
         self.assertIn("No change", r.text)
         self.assertEqual(self.log.position()[1], head)
 
-    def test_edit_publishes_changed_and_derived_columns_only(self):
-        r = self.client.post("/t/odi.finished_good/edit/FG-0008",
-                             data={**self.form("odi.finished_good", "FG-0008", ActualWrappedUnits=4000),
-                                   "note": "recount"})
+    def test_edit_publishes_the_changed_columns_only(self):
+        r = self.client.post("/t/odi.batch_mapping/edit/ODI-0002",
+                             data={**self.form("odi.batch_mapping", "ODI-0002", Quantity=7500), "note": "recount"})
         self.assertIn("Published event", r.text)
         ev = self.log.tail(1)[0]
-        self.assertEqual((ev.op, ev.key, ev.note), ("U", "FG-0008", "recount"))
+        self.assertEqual((ev.op, ev.key, ev.note), ("U", "ODI-0002", "recount"))
         self.assertTrue(ev.producer.startswith("simulator:Ana"))
-        changed = {k for k in ev.after if ev.after[k] != ev.before[k]}
-        self.assertEqual(changed, {"ActualWrappedUnits", "ExpectedEndingInventoryQty", "TotalPieces"})
-        self.assertEqual(ev.after["ExpectedEndingInventoryQty"], 0)
+        self.assertEqual({k for k in ev.after if ev.after[k] != ev.before[k]}, {"Quantity"})
         # The response refreshes the table and the feed out of band.
         self.assertIn('id="feed" class="feed" hx-swap-oob="true"', r.text)
 
-    def test_mips_edit_stamps_last_modified_with_plant_time(self):
-        self.client.post("/t/mips.order_line/edit/ML-0010",
-                         data=self.form("mips.order_line", "ML-0010", **{"Order Quantity": 2200}))
-        ev = self.log.tail(1)[0]
-        stamped = dt.datetime.fromisoformat(ev.after["Last Modify Date Time"])
-        self.assertLess(abs((stamped - SimClock(self.log).now()).total_seconds()), 5)
-
     def test_stale_form_is_refused(self):
-        stale = self.form("wms.item_order", "WL-0015", **{"Order Qty": 900})
-        self.log.publish(Change("wms.item_order", "U", "WL-0015", {"Order Qty": 800}), "cli", NOW)
+        stale = self.form("buss.sales_order", "2263245-1", **{"Order Quantity": 7900})
+        self.log.publish(Change("buss.sales_order", "U", "2263245-1", {"Order Quantity": 7800}), "cli", NOW)
         head = self.log.position()[1]
-        r = self.client.post("/t/wms.item_order/edit/WL-0015", data=stale)
+        r = self.client.post("/t/buss.sales_order/edit/2263245-1", data=stale)
         self.assertIn("changed (event", r.text)
         self.assertEqual(self.log.position()[1], head)
 
     def test_bad_value_is_refused_and_kept_on_screen(self):
         head = self.log.position()[1]
-        r = self.client.post("/t/wms.order/edit/9900002", data=self.form("wms.order", "9900002", **{"Order Qty": "lots"}))
+        r = self.client.post("/t/wms.inventory/edit/INV-0001", data=self.form("wms.inventory", "INV-0001", **{"On hand": "lots"}))
         self.assertIn("Not saved", r.text)
         self.assertIn('value="lots"', r.text)
         self.assertEqual(self.log.position()[1], head)
 
     def test_insert_copy_and_delete(self):
-        r = self.client.get("/t/odi.finished_good/new?clone=FG-0002")
-        self.assertIn('value="FG-0015"', r.text)   # next free key in the entity's pattern
-        data = self.form("odi.finished_good", "FG-0002", FGEntryID="FG-0015", NetUnitsOrdered=500,
-                         ActualWrappedUnits=500)
-        r = self.client.post("/t/odi.finished_good/new", data=data)
+        r = self.client.get("/t/odi.batch_mapping/new?clone=ODI-0002")
+        self.assertIn('value="ODI-0022"', r.text)   # next free key in the entity's pattern (21 seeded rows)
+        data = self.form("odi.batch_mapping", "ODI-0002", **{"ODI Entry ID": "ODI-0022", "Quantity": 500})
+        r = self.client.post("/t/odi.batch_mapping/new", data=data)
         self.assertIn("Published event", r.text)
-        self.assertIsNotNone(self.log.current("odi.finished_good", "FG-0015"))
-        r = self.client.post("/t/odi.finished_good/new", data=data)
+        self.assertIsNotNone(self.log.current("odi.batch_mapping", "ODI-0022"))
+        r = self.client.post("/t/odi.batch_mapping/new", data=data)
         self.assertIn("already exists", r.text)
-        self.client.post("/t/odi.finished_good/delete/FG-0015", data={"note": "keyed by mistake"})
-        self.assertIsNone(self.log.current("odi.finished_good", "FG-0015"))
-
-    def test_rebuild_order_totals_clears_the_header_mismatch(self):
-        self.log.publish(Change("wms.item_order", "U", "WL-0015", {"Order Qty": 800}), "cli", NOW)
-        self.client.post("/t/wms.order/recalc/9900004")
-        order = self.log.current("wms.order", "9900004")
-        self.assertEqual((order["Order Qty"], order["Allocated Qty"], order["Short Qty"]), (4000, 4000, 0))
-        r = self.client.post("/t/wms.order/recalc/9900004")
-        self.assertIn("already match", r.text)
+        self.client.post("/t/odi.batch_mapping/delete/ODI-0022", data={"note": "keyed by mistake"})
+        self.assertIsNone(self.log.current("odi.batch_mapping", "ODI-0022"))
 
     def test_clock_controls(self):
         self.client.post("/clock", data={"action": "pause"})
@@ -168,20 +150,20 @@ class SimulatorTest(unittest.TestCase):
         self.assertIn("positive", r.text)
 
     def test_reset_reseeds(self):
-        self.log.publish(Change("wms.order", "D", "9900001"), "cli", NOW)
+        self.log.publish(Change("buss.sales_order", "D", "2263245-1"), "cli", NOW)
         r = self.client.post("/reset")
-        self.assertEqual(r.headers.get("HX-Redirect"), "/t/mips.order_line")
+        self.assertEqual(r.headers.get("HX-Redirect"), "/t/buss.sales_order")
         self.assertEqual(self.log.position()[1], len(seed.build()))
 
     def test_poll_refreshes_the_table_only_when_the_log_moved(self):
         head = self.log.position()[1]
-        self.assertNotIn('id="table"', self.client.get(f"/poll?entity=wms.order&seen={head}").text)
-        self.assertIn('id="table"', self.client.get(f"/poll?entity=wms.order&seen={head - 1}").text)
+        self.assertNotIn('id="table"', self.client.get(f"/poll?entity=wms.inventory&seen={head}").text)
+        self.assertIn('id="table"', self.client.get(f"/poll?entity=wms.inventory&seen={head - 1}").text)
 
     def test_next_key(self):
         from recon_agent.events import contract
-        self.assertEqual(next_key(contract.ENTITIES["wms.order"], ["9900001", "9900004"]), "9900005")
-        self.assertEqual(next_key(contract.ENTITIES["mips.order_line"], ["ML-0009", "ML-0017"]), "ML-0018")
+        self.assertEqual(next_key(contract.ENTITIES["mips.work_order"], [WO1, WO1[:-1] + "3"]), WO1[:-1] + "4")
+        self.assertEqual(next_key(contract.ENTITIES["odi.batch_mapping"], ["ODI-0009", "ODI-0021"]), "ODI-0022")
 
 
 class RealtimeTest(unittest.TestCase):
@@ -190,7 +172,7 @@ class RealtimeTest(unittest.TestCase):
         store = Store(sources.EventFeed(log.path))
         self.assertEqual(log.committed(sources.CONSUMER)[0], log.position()[1])
         self.assertEqual(log.latencies(sources.CONSUMER), [])   # seed events are not timed
-        log.publish(Change("wms.item_order", "U", "WL-0015", {"Order Qty": 800}), "simulator:test", NOW)
+        log.publish(Change("wms.inventory", "U", "INV-0003", {"On hand": 1800}), "simulator:test", NOW)
         self.assertEqual(log.latencies(sources.CONSUMER)[0][1], None)   # not processed yet
         store.refresh_if_sources_changed()
         seq, seconds = log.latencies(sources.CONSUMER)[0]
@@ -206,9 +188,9 @@ class RealtimeTest(unittest.TestCase):
         client = TestClient(app)
         sign_in(client, "sam")
         store = app.state.store
-        log.publish(Change("wms.item_order", "U", "WL-0015", {"Order Qty": 800}), "cli", NOW)
+        log.publish(Change("wms.inventory", "U", "INV-0003", {"On hand": 1800}), "cli", NOW)
         store.refresh_if_sources_changed()
-        with client.stream("GET", f"/stream?since=0") as r:
+        with client.stream("GET", "/stream?since=0") as r:
             lines = []
             for line in r.iter_lines():
                 lines.append(line)
@@ -255,27 +237,26 @@ class NarrationTest(unittest.TestCase):
         store = Store(sources.EventFeed(log.path))
         self.assertEqual(store.narration_state, "pending")
         # A burst of events inside the debounce window: one call, after it.
-        for qty in (900, 850, 800):
-            log.publish(Change("wms.item_order", "U", "WL-0015", {"Order Qty": qty}), "cli", NOW)
+        for qty in (1850, 1820, 1800):
+            log.publish(Change("wms.inventory", "U", "INV-0003", {"On hand": qty}), "cli", NOW)
             store.refresh_if_sources_changed()
         self.wait_for(store, "ai")
         self.assertEqual(len(self.calls), 1)
         self.assertTrue(store.narration_is_ai)
         self.assertIn(AI_READY, store.changes_since(0, "someone"))
-        _, f = store.find("R05-900102")
-        self.assertEqual(f.narrative, "AI R05-900102")
+        _, f = store.find("R05-950513")
+        self.assertEqual(f.narrative, "AI R05-950513")
 
         # A change that touches one SKU: everything else comes from the cache, one new call.
-        log.publish(Change("odi.finished_good", "U", "FG-0008", {"ActualWrappedUnits": 3500}), "cli", NOW)
+        log.publish(Change("wms.inventory", "U", "INV-0001", {"On hand": 7373}), "cli", NOW)
         store.refresh_if_sources_changed()
-        self.assertEqual(store.find("R05-900102")[1].narrative, "AI R05-900102")   # cached at once
+        self.assertEqual(store.find("R05-950513")[1].narrative, "AI R05-950513")   # cached at once
         self.assertFalse(store.narration_is_ai)   # run totals changed: rule briefing until the model answers
         self.wait_for(store, "ai")
         self.assertEqual(len(self.calls), 2)
 
         # Going back to an already explained state needs no call at all.
-        log.publish(Change("odi.finished_good", "U", "FG-0008", {"ActualWrappedUnits": 3300}), "cli", NOW)
-        log.publish(Change("wms.item_order", "U", "WL-0015", {"Order Qty": 800}), "cli", NOW)
+        log.publish(Change("wms.inventory", "U", "INV-0001", {"On hand": 7473}), "cli", NOW)
         store.refresh_if_sources_changed()
         self.assertEqual(store.narration_state, "ai")
         self.assertEqual(len(self.calls), 2)

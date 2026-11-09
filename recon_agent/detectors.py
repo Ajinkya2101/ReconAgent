@@ -1,42 +1,36 @@
-"""Mismatch detectors.
+"""Mismatch detectors: one rule per step of the demand-to-delivery flow.
 
-Each rule maps to a scenario in the WMS_AI_Agent_Requirement brief and to a
-challenge area on the "Challenges" slide, produces evidence from the source
-systems, and proposes a quantified correction. The rules are deterministic so
-every finding is auditable; the AI layer explains and prioritises them.
+The flow (docs/DATA_MODEL_9NOV.md): capture demand from BUSS orders and the Oracle
+forecast, remove the stock WMS has allocated, subtract what WMS has available, size
+the MIPS work order to the shortfall, map every demand line to that work order in
+ODI, produce and wrap before the ship date. Each rule checks that one system holds
+its part of that chain, produces evidence from the source rows, and proposes a
+quantified correction. The rules are deterministic so every finding is auditable;
+the AI layer explains and prioritises them.
 """
 from __future__ import annotations
 
-import datetime as dt
-import re
-from collections import defaultdict
 from dataclasses import dataclass, field
 
 from . import config
 from .ingest import SourceData
 from .position import SkuPosition
 
-# code: (title, requirement-doc scenario, challenge area, base severity)
+# code: (title, flow step, challenge area, base severity)
 RULES = {
-    "R01": ("Inventory applied to first order line only", "1 - Multiple order lines for same SKU", "Inventory Allocation", "High"),
-    "R02": ("Inventory netted without audit trail", "2 - Inventory on zero-qty / blind line", "Inventory Synchronization", "Medium"),
-    "R03": ("Zero-quantity (blind) production line", "2 - Inventory on zero-qty / blind line", "Order-to-Batch Traceability", "Low"),
-    "R04": ("Production run moved; ghost run left behind", "3 - Inventory does not follow moved run", "Inventory Synchronization", "Medium"),
-    "R05": ("Recovery run over-built (double-counted demand)", "4 - Additional / recovery production runs", "Inventory Allocation", "High"),
-    "R06": ("Excess production not carried to next demand", "1/4 - Excess not applied to subsequent demand", "Inventory Allocation", "Medium"),
-    "R07": ("WMS filled demand from untracked inventory", "7 - Freezer inventory remains after use", "Freezer Inventory Management", "High"),
-    "R08": ("Negative net order: inventory exceeds demand", "2 - Inventory on zero-qty / blind line", "Inventory Synchronization", "Medium"),
-    "R09": ("MIPS vs WMS order quantity mismatch", "6 - Screen-refresh / stale data", "Production Visibility", "Medium"),
-    "R10": ("WMS allocation short of order", "5 - Net quantity not reflected", "Warehouse Traceability", "Medium"),
-    "R11": ("Units-per-container master data conflict", "Data harmonization", "Data Flow Transparency", "Medium"),
-    "R12": ("Shipped without trailer load scan", "8 - Missing downstream transactions", "Warehouse Traceability", "High"),
-    "R13": ("Cross-report total mismatch", "8 - Missing downstream transactions", "Integration Architecture", "Medium"),
-    "R14": ("Batches mixed differ from MIPS schedule", "Order-to-batch traceability", "Order-to-Batch Traceability", "Low"),
-    "R15": ("SKU key formatting differs by source system", "Data harmonization", "Data Flow Transparency", "Low"),
-    "R16": ("ODI MIPS order qty disagrees with MIPS sales orders", "8 - Missing downstream transactions", "Integration Architecture", "Medium"),
-    "R17": ("Statistical outlier - possible data-entry error", "Unusually large quantity", "Production Visibility", "Medium"),
-    "R18": ("WMS transaction not posted in Oracle within 10 minutes", "8 - Missing downstream transactions", "Integration Architecture", "High"),
-    "R19": ("Return to plant did not reduce received quantity", "5 - Net quantity not reflected", "Returns & Adjustments", "High"),
+    "R01": ("Demand line missing from the ODI mapping", "1 - Capture demand", "Integration Architecture", "High"),
+    "R02": ("ODI quantity differs from the order or forecast", "1 - Capture demand", "Integration Architecture", "Medium"),
+    "R03": ("ODI maps demand that no longer exists", "1 - Capture demand", "Integration Architecture", "Medium"),
+    "R04": ("MIPS demand is not demand less allocated stock", "3 - Remove allocated stock", "Inventory Allocation", "Medium"),
+    "R05": ("Work order not sized to the shortfall", "4/5 - Shortfall to work order", "Inventory Allocation", "High"),
+    "R06": ("Shortfall with no work order", "5 - Create work order", "Production Visibility", "High"),
+    "R07": ("ODI work order differs from MIPS", "5 - Work order to ODI", "Order-to-Batch Traceability", "Medium"),
+    "R08": ("Demand line neither allocated nor on a work order", "3/5 - Allocate or produce", "Order-to-Batch Traceability", "Medium"),
+    "R09": ("Allocated stock differs between WMS and ODI", "3 - Remove allocated stock", "Inventory Synchronization", "Medium"),
+    "R10": ("WMS on hand is not available plus allocated", "4 - Check available stock", "Warehouse Traceability", "Medium"),
+    "R11": ("Batches mixed differ from the MIPS schedule", "7 - Produce, then wrap", "Order-to-Batch Traceability", "Low"),
+    "R12": ("Finished goods wrapped after the requested ship date", "8 - Move FG to WMS", "Production Visibility", "High"),
+    "R13": ("Item codes differ between systems", "Master data", "Data Flow Transparency", "Low"),
 }
 
 SEVERITY_WEIGHT = {"High": 3.0, "Medium": 2.0, "Low": 1.0}
@@ -94,456 +88,316 @@ def _fmt(x: float) -> str:
     return f"{x:,.0f}"
 
 
-def _run_label(r) -> str:
-    start = r.start.strftime("%m/%d %H:%M") if r.start else "n/a"
-    return f"{r.formula_type} {r.line}/{r.shift or 'no shift'} @ {start}"
+def _sized(units: float, high: str = "High", low: str = "Medium") -> str:
+    return high if abs(units) >= config.HIGH_UNITS else low
+
+
+def _differs(a: float, b: float) -> bool:
+    return abs(a - b) > config.QTY_TOLERANCE_UNITS
+
+
+def _equation(p: SkuPosition) -> str:
+    return (f"{_fmt(p.so_qty)} ordered + {_fmt(p.forecast_qty)} forecast - {_fmt(p.allocated)} allocated - "
+            f"{_fmt(p.available)} available = {_fmt(p.shortfall)}")
 
 
 # --------------------------------------------------------------------------
-# SKU-level rules
+# 1. Capture demand: every BUSS order line and Oracle forecast reaches ODI unchanged
 # --------------------------------------------------------------------------
 
-def r01_first_line_allocation(p: SkuPosition) -> list[Finding]:
-    if len(p.lines) < 2 or p.first_line_overproduction_risk <= 0:
-        return []
-    parts = " + ".join(f"{_fmt(l.order_qty)} ({'SO' if l.is_sales_order else 'SP'}"
-                       f"{', moved' if l.order_moved else ''})" for l in p.lines)
-    return [Finding(
-        "R01", p.sku, p.sku, p.description, p.first_line_overproduction_risk, p.unit_price,
-        evidence={"lines": parts, "total_demand": p.demand_total, "inventory": p.implied_inventory,
-                  "first_line_qty": p.lines[0].order_qty,
-                  "first_line_only_requirement": p.first_line_only_requirement,
-                  "consolidated_requirement": p.consolidated_requirement},
-        recommendation=(
-            f"Consolidate the {len(p.lines)} MIPS lines ({parts} = {_fmt(p.demand_total)}) before applying "
-            f"the {_fmt(p.implied_inventory)} units of available inventory. SKU-level requirement is "
-            f"{_fmt(p.consolidated_requirement)}, not {_fmt(p.first_line_only_requirement)} - "
-            f"applying inventory to the first line alone risks over-producing "
-            f"{_fmt(p.first_line_overproduction_risk)} units."),
-        severity="High" if p.first_line_overproduction_risk >= 1000 else "Medium",
-        systems=["MIPS", "ODI"])]
-
-
-def r02_untraceable_inventory(p: SkuPosition) -> list[Finding]:
-    if (p.implied_inventory <= 0 or p.recorded_inventory != 0 or p.first_line_overproduction_risk > 0
-            or any(r.net_units_ordered < 0 for r in p.runs)):
-        return []
-    sent = p.active_runs[0].net_units_ordered
-    later = p.demand_after_order
-    inventory, requirement = p.implied_inventory, p.consolidated_requirement
-    # The correction names the resulting requirement, as the client's example does ("Apply the 1,200 units
-    # to the active sales-order lines and reduce the production requirement to 800 units").
-    verb = "keep" if abs(requirement - sent) < 0.5 else "set"
-    return [Finding(
-        "R02", p.sku, p.sku, p.description, inventory, p.unit_price,
-        evidence={"mips_demand": p.demand_at_order, "odi_net_ordered_first_run": sent,
-                  "mips_beginning_inventory_recorded": p.recorded_inventory,
-                  "requirement_after_inventory": requirement,
-                  **({"demand_changed_after_order": later} if later else {})},
-        recommendation=(
-            f"MIPS sent {_fmt(sent)} to production against {_fmt(p.demand_at_order)} demand"
-            + (f" (demand has since changed by {later:+,.0f}, which is new demand, not inventory)" if later else "")
-            + ", so "
-            f"{_fmt(inventory)} units of inventory were applied - but MIPSBeginningInventoryQty is 0, so no "
-            f"system can trace them. Apply the {_fmt(inventory)} units to the active sales-order lines (not a "
-            f"zero-quantity or planning line), {verb} the production requirement at {_fmt(requirement)} units "
-            f"({_fmt(p.demand_total)} demand - {_fmt(inventory)} inventory), and record them as beginning "
-            f"inventory so WMS tickets and Oracle can trace them."),
-        systems=["MIPS", "ODI"])]
-
-
-def r05_recovery_run(p: SkuPosition) -> list[Finding]:
-    runs = p.active_runs
-    if len(runs) < 2:
-        return []
-    first, *rest = runs
-    # A recovery run should make only what run 1 left short of the requirement. It over-builds by
-    # what it ordered beyond that (even before it wraps) or by what was wrapped beyond the
-    # requirement (when it over-ran its own order), whichever is larger.
-    remaining = max(0.0, p.consolidated_requirement - first.wrapped_units)
-    recovery_ordered = sum(r.net_units_ordered for r in rest)
-    overbuilt = p.wrapped - p.consolidated_requirement
-    overbuild = max(recovery_ordered - remaining, overbuilt, 0.0)
-    if overbuild < config.OVERPRODUCTION_MIN_UNITS:
-        return []
-    detail = "; ".join(f"{_run_label(r)}: ordered {_fmt(r.net_units_ordered)}, wrapped "
-                       f"{_fmt(r.wrapped_units)} ({r.expected_ending_inventory:+,.0f})" for r in runs)
-    action = (f"Apply the {_fmt(overbuild)}-unit surplus to the next sales day for this SKU (or designate to "
-              f"freezer)" if overbuilt >= overbuild else
-              f"Cut the open recovery order to the {_fmt(remaining)} still needed before it wraps; as ordered it "
-              f"makes {_fmt(overbuild)} too many")
-    return [Finding(
-        "R05", p.sku, p.sku, p.description, overbuild, p.unit_price,
-        evidence={"runs": detail, "demand": p.demand_total, "net_ordered_all_runs": p.net_ordered,
-                  "wrapped_all_runs": p.wrapped, "need_after_first_run": remaining},
-        recommendation=(
-            f"After run 1 wrapped {_fmt(first.wrapped_units)}, "
-            + (f"only {_fmt(remaining)} units were still needed" if remaining else
-               "the SKU requirement was already covered")
-            + f", but the recovery run(s) ordered {_fmt(recovery_ordered)}. Across runs ODI ordered "
-            f"{_fmt(p.net_ordered)} against {_fmt(p.demand_total)} MIPS demand and "
-            f"{_fmt(p.wrapped)} were wrapped. {action}, and size future recovery runs to the remaining "
-            f"shortfall only."),
-        severity="High" if overbuild >= 1000 else "Medium",
-        systems=["MIPS", "ODI"])]
-
-
-def r06_carryover(p: SkuPosition) -> list[Finding]:
-    surplus = -p.net_requirement
-    if (len(p.active_runs) >= 2 or surplus < config.CARRYOVER_MIN_UNITS
-            or any(r.net_units_ordered < 0 for r in p.runs)):
-        return []
-    return [Finding(
-        "R06", p.sku, p.sku, p.description, surplus, p.unit_price,
-        evidence={"demand": p.demand_total, "inventory_applied": p.implied_inventory,
-                  "wrapped": p.wrapped, "odi_expected_ending_inventory": p.expected_excess},
-        recommendation=(
-            f"{_fmt(surplus)} units remain after covering all {_fmt(p.demand_total)} units of demand. "
-            f"Carry them to the next sales day as beginning inventory for this SKU and reduce the next "
-            f"production requirement by {_fmt(surplus)} (or designate to freezer), instead of letting "
-            f"MIPS roll them into an unrelated line."),
-        severity="Medium" if surplus >= 1000 else "Low",
-        systems=["ODI", "MIPS", "WMS"])]
-
-
-def r07_untracked_supply(p: SkuPosition) -> list[Finding]:
-    gap = p.net_requirement
-    if gap < 20 or not p.wms or p.wms_allocated < p.demand_current:
-        return []
-    return [Finding(
-        "R07", p.sku, p.sku, p.description, gap, p.unit_price,
-        evidence={"demand": p.demand_total, "inventory_applied": p.implied_inventory,
-                  "wrapped": p.wrapped, "wms_allocated": p.wms_allocated,
-                  "moved_demand": p.demand_moved, "odi_runs": len(p.active_runs),
-                  **({"returned_to_plant": p.returns} if p.returns else {})},
-        recommendation=(
-            f"WMS allocated the full {_fmt(p.wms_allocated)} units, yet production plus applied "
-            f"inventory only covers {_fmt(p.usable_supply)} of {_fmt(p.demand_total)} demand"
-            + (f" ({_fmt(p.returns)} of the {_fmt(p.wrapped)} wrapped went back to the plant)" if p.returns else "")
-            + f". {_fmt(gap)} units came from stock MIPS does not see (freezer or prior-day tickets)"
-            + (f", or part of the {_fmt(p.demand_moved)} units moved to the prior sales day went unfilled"
-               if p.demand_moved else "") +
-            f". Confirm the freezer/ticket draw in WMS and deduct it in MIPS; otherwise freezer balances "
-            f"stay overstated."),
-        severity="High" if gap >= 500 else "Medium",
-        systems=["WMS", "MIPS", "ODI"])]
-
-
-def r08_negative_net(p: SkuPosition) -> list[Finding]:
-    neg = [r for r in p.runs if r.net_units_ordered < 0]
-    if not neg:
-        return []
-    excess = -sum(r.net_units_ordered for r in neg)
-    return [Finding(
-        "R08", p.sku, p.sku, p.description, excess, p.unit_price,
-        evidence={"runs": "; ".join(f"{_run_label(r)}: net {_fmt(r.net_units_ordered)}" for r in neg),
-                  "demand": p.demand_total, "wms_allocated": p.wms_allocated},
-        recommendation=(
-            f"ODI shows a negative net order ({_fmt(-excess)}): inventory already exceeds the "
-            f"{_fmt(p.demand_total)}-unit demand by {_fmt(excess)}. No production is needed. Remove the "
-            f"run from the schedule, and verify the {_fmt(excess)} surplus units exist in WMS before they are "
-            f"carried forward."),
-        systems=["MIPS", "ODI", "WMS"])]
-
-
-def r09_order_mismatch(p: SkuPosition) -> list[Finding]:
-    if not p.wms or not p.lines:
-        return []
-    diff = p.wms_order_qty - p.demand_current
-    if abs(diff) <= config.QTY_TOLERANCE_UNITS:
-        return []
-    last_mod = max((l.last_modified for l in p.lines if l.last_modified), default=None)
-    # Scenario 6 evidence in the client's own report: 'Original Ord Qty' differs from 'Order Qty' when a
-    # customer order changed after it was placed. MIPS still planning the original total proves the change
-    # never reached MIPS.
-    changed = p.wms.changed_orders
-    original = p.wms.original_order_qty
-    stale_original = bool(changed) and abs(original - p.demand_current) <= config.QTY_TOLERANCE_UNITS
-    if stale_original:
-        changes = "; ".join(f"{o.customer} {_fmt(o.original_qty)} → {_fmt(o.order_qty)}" for o in changed)
-        direction = (f"WMS customer orders changed after they were placed ({changes}): the item total went from "
-                     f"{_fmt(original)} to {_fmt(p.wms_order_qty)}, but MIPS still plans the original "
-                     f"{_fmt(p.demand_current)}, so the change never reached MIPS. "
-                     + (f"Add {_fmt(diff)} to the MIPS requirement, or production will be short."
-                        if diff > 0 else
-                        f"Reduce the MIPS requirement by {_fmt(-diff)}; as planned they are over-production."))
-    elif diff > 0:
-        direction = (f"WMS carries {_fmt(diff)} more units than MIPS scheduled - the order changed after MIPS "
-                     f"last synced{f' ({last_mod:%m/%d %H:%M})' if last_mod else ''}. Confirm the WMS order and "
-                     f"add {_fmt(diff)} to the MIPS requirement, or production will be short.")
-    else:
-        direction = (f"MIPS scheduled {_fmt(-diff)} more units than WMS has on order. Refresh MIPS from the "
-                     f"order source; the extra {_fmt(-diff)} units are an over-production candidate.")
-    return [Finding(
-        "R09", p.sku, p.sku, p.description, diff, p.unit_price,
-        evidence={"mips_demand_sales_date": p.demand_current, "wms_order_qty": p.wms_order_qty,
-                  "mips_last_modified": str(last_mod) if last_mod else None,
-                  **({"wms_original_order_qty": original,
-                      "wms_orders_changed": "; ".join(f"{o.customer} {_fmt(o.original_qty)} → {_fmt(o.order_qty)}"
-                                                      for o in changed)} if changed else {})},
-        recommendation=direction, systems=["MIPS", "WMS"])]
-
-
-def r10_wms_short(p: SkuPosition) -> list[Finding]:
-    if not p.wms or p.wms_allocated >= p.wms_order_qty:
-        return []
-    short = p.wms_order_qty - p.wms_allocated
-    custs = [o.customer for o in p.wms.orders if o.allocated_units < o.order_qty]
-    return [Finding(
-        "R10", p.sku, p.sku, p.description, short, p.unit_price,
-        evidence={"wms_order_qty": p.wms_order_qty, "wms_allocated": p.wms_allocated,
-                  "wrapped": p.wrapped, "short_customers": ", ".join(custs)},
-        recommendation=(
-            f"WMS is {_fmt(short)} units short for {', '.join(custs)} although ODI wrapped "
-            f"{_fmt(p.wrapped)}. Check for returned/damaged tickets not netted from the received total, "
-            f"or stale workstation data, before a new work order is created."),
-        systems=["WMS", "ODI"])]
-
-
-def r11_uom(p: SkuPosition) -> list[Finding]:
-    if not p.wms or not p.upc_mips or p.upc_mips == p.wms.units_per_container:
-        return []
-    return [Finding(
-        "R11", p.sku, p.sku, p.description, 0, p.unit_price,
-        evidence={"mips_units_per_container": p.upc_mips,
-                  "wms_units_per_container": p.wms.units_per_container},
-        recommendation=(
-            f"MIPS uses {p.upc_mips:.0f} units/container but WMS uses "
-            f"{p.wms.units_per_container:.0f}. Stack and tray counts will not tie out between systems; "
-            f"align the item master (Oracle is the system of record)."),
-        systems=["MIPS", "WMS"])]
-
-
-def r16_odi_order_qty(p: SkuPosition) -> list[Finding]:
-    if not p.active_runs or not p.lines:
-        return []
-    odi_qty = sum(r.mips_order_qty for r in p.runs)
-    if abs(odi_qty - p.demand_sales_orders) <= config.QTY_TOLERANCE_UNITS:
-        return []
-    return [Finding(
-        "R16", p.sku, p.sku, p.description, odi_qty - p.demand_sales_orders, p.unit_price,
-        evidence={"odi_mips_order_qty": odi_qty, "mips_sales_order_qty": p.demand_sales_orders},
-        recommendation="ODI's copy of the MIPS sales-order quantity differs from MIPS. Re-run the "
-                       "MIPS→ODI interface for this SKU and confirm no order transaction was dropped.",
-        systems=["MIPS", "ODI"])]
-
-
-SKU_RULES = [r01_first_line_allocation, r02_untraceable_inventory, r05_recovery_run, r06_carryover,
-             r07_untracked_supply, r08_negative_net, r09_order_mismatch, r10_wms_short, r11_uom,
-             r16_odi_order_qty]
-
-
-# --------------------------------------------------------------------------
-# Run / plant-level rules
-# --------------------------------------------------------------------------
-
-MOVES = ("line", "day", "sequence")   # how a run can move (client scenario 3), most visible first
-
-
-def _move(ghost, real) -> str | None:
-    """How `real` differs from the slot `ghost` was left in: another line, production day or run sequence."""
-    if real.line != ghost.line:
-        return "line"
-    if ghost.start and real.start and ghost.start.date() != real.start.date():
-        return "day"
-    if ghost.start and real.start and ghost.start != real.start:
-        return "sequence"
-    return None
-
-
-def _moved_text(r, to, move: str) -> tuple[str, str]:
-    """(what moved, where the copy stays) for the R04 correction."""
-    if move == "line":
-        return f"from {r.line} to {to.line}", f"on {r.line}"
-    if move == "day":
-        return (f"from production day {r.start:%m/%d} to {to.start:%m/%d} ({to.line})",
-                f"on {r.start:%m/%d}")
-    return f"from the {r.start:%H:%M} slot to {to.start:%H:%M} on {r.line}", f"in the {r.start:%H:%M} slot"
-
-
-def r03_r04_run_structure(src: SourceData, positions: dict[str, SkuPosition]) -> list[Finding]:
+def r01_r02_r03_demand_capture(p: SkuPosition) -> list[Finding]:
     out = []
-    real = [r for r in src.fg_runs if r.net_units_ordered or r.wrapped_units]
-    for r in src.fg_runs:
-        if r.net_units_ordered or r.wrapped_units:
+    odi_so = {(e.ref, e.ref_line or 1): e for e in p.odi if e.is_sales_order}
+    odi_fc = {e.ref: e for e in p.odi if not e.is_sales_order}
+    sources: list[tuple[str, str, str, float, object]] = (
+        [("BUSS", f"{o.order_nbr}-{o.line}", f"sales order {o.order_nbr} line {o.line} ({o.customer})", o.qty,
+          odi_so.get(o.ref)) for o in p.orders]
+        + [("Oracle", f.forecast_id, f"forecast {f.forecast_id}", f.qty, odi_fc.get(f.forecast_id))
+           for f in p.forecasts])
+    for system, key, label, qty, entry in sources:
+        if entry is None:
+            out.append(Finding(
+                "R01", key, p.sku, p.description, qty, p.unit_price,
+                evidence={"source_system": system, "demand_line": label, "source_qty": qty,
+                          "odi_demand": p.odi_demand, "total_demand": p.demand},
+                recommendation=(
+                    f"{system} has {label} for {_fmt(qty)} units, but the ODI batch mapping has no row for it, so "
+                    f"MIPS and the work order never see this demand. Re-send it through ODI and add its "
+                    f"{_fmt(qty)} units to the work order, or the customer is short."),
+                severity=_sized(qty), systems=[system, "ODI", "MIPS"]))
+        elif _differs(entry.qty, qty):
+            diff = qty - entry.qty
+            mips_current = bool(p.work_orders) and not _differs(p.mips_demand, p.demand_left)
+            out.append(Finding(
+                "R02", key, p.sku, p.description, diff, p.unit_price,
+                evidence={"source_system": system, "demand_line": label, "source_qty": qty, "odi_qty": entry.qty,
+                          "odi_entry": entry.entry_id, "mips_demand": p.mips_demand, "demand_left": p.demand_left},
+                recommendation=(
+                    f"{system} has {label} at {_fmt(qty)} units, but ODI still maps {_fmt(entry.qty)} "
+                    f"({diff:+,.0f}): the change never reached ODI. Set the ODI row {entry.entry_id} to {_fmt(qty)}"
+                    + (f". MIPS already plans the current {_fmt(p.demand_left)} demand left, so only the ODI copy "
+                       f"and the batches mapped to it are wrong." if mips_current else
+                       ", then re-check the MIPS demand and work order, which follow ODI's figure.")),
+                severity=_sized(diff, "High", "Medium"), systems=[system, "ODI", "MIPS"]))
+    known_so = {o.ref for o in p.orders}
+    known_fc = {f.forecast_id for f in p.forecasts}
+    for e in p.odi:
+        missing = (e.ref, e.ref_line or 1) not in known_so if e.is_sales_order else e.ref not in known_fc
+        if missing:
+            what = f"sales order {e.ref} line {e.ref_line or 1}" if e.is_sales_order else f"forecast {e.ref}"
+            source = "BUSS" if e.is_sales_order else "Oracle"
+            out.append(Finding(
+                "R03", e.entry_id, p.sku, p.description, -e.qty, p.unit_price,
+                evidence={"odi_entry": e.entry_id, "demand_line": what, "odi_qty": e.qty, "source_system": source,
+                          "work_order": e.wo or None},
+                recommendation=(
+                    f"ODI row {e.entry_id} maps {what} for {_fmt(e.qty)} units, but {source} no longer has it "
+                    f"(cancelled or deleted). The {_fmt(e.qty)} units are over-production if MIPS keeps planning "
+                    f"them: remove the ODI row and take the units off the work order."),
+                severity=_sized(e.qty), systems=[source, "ODI", "MIPS"]))
+    return out
+
+
+# --------------------------------------------------------------------------
+# 3-5. MIPS plans demand less allocated stock, and sizes the work order to the shortfall
+# --------------------------------------------------------------------------
+
+def r04_mips_demand(p: SkuPosition) -> list[Finding]:
+    if not p.work_orders or not _differs(p.mips_demand, p.demand_left):
+        return []
+    diff = p.demand_left - p.mips_demand
+    via_odi = not _differs(p.mips_demand, p.odi_demand_left) and _differs(p.odi_demand, p.demand)
+    if via_odi:
+        cause = (f"MIPS follows ODI's copy of the demand ({_fmt(p.odi_demand)}), which is "
+                 f"{_fmt(abs(p.odi_demand - p.demand))} {'short of' if p.odi_demand < p.demand else 'above'} BUSS "
+                 f"and Oracle. Correct the ODI mapping first; then ")
+    elif not _differs(p.mips_demand, p.demand):
+        cause = f"MIPS did not remove the {_fmt(p.allocated)} units WMS has already allocated to orders. "
+    else:
+        cause = ""
+    return [Finding(
+        "R04", p.sku, p.sku, p.description, diff, p.unit_price,
+        evidence={"sales_orders": p.so_qty, "forecast": p.forecast_qty, "total_demand": p.demand,
+                  "wms_allocated": p.allocated, "demand_left": p.demand_left, "mips_demand": p.mips_demand,
+                  "odi_demand": p.odi_demand, "work_orders": ", ".join(p.wo_numbers)},
+        recommendation=(
+            f"MIPS plans {_fmt(p.mips_demand)} as Forecast / Order Quantity, but BUSS orders "
+            f"({_fmt(p.so_qty)}) plus the Oracle forecast ({_fmt(p.forecast_qty)}) less the {_fmt(p.allocated)} "
+            f"allocated in WMS leave {_fmt(p.demand_left)} ({diff:+,.0f}). {cause}"
+            f"{'set' if cause.endswith('then ') else 'Set'} the MIPS demand to {_fmt(p.demand_left)}."),
+        severity=_sized(diff, "High", "Medium"), systems=["MIPS", "ODI", "WMS"])]
+
+
+def r05_work_order_size(p: SkuPosition) -> list[Finding]:
+    if not p.work_orders or not _differs(p.wo_qty, p.shortfall):
+        return []
+    units = p.shortfall - p.wo_qty   # negative: the work order makes too many
+    wos = ", ".join(p.wo_numbers)
+    if p.shortfall == 0:
+        why = (f"WMS already has {_fmt(p.available)} available against {_fmt(p.demand_left)} demand left, so no "
+               f"production is needed. Cancel work order {wos} or cut it to 0")
+    elif p.available and not _differs(p.wo_qty, p.demand_left):
+        why = (f"MIPS sized the work order to the {_fmt(p.demand_left)} demand left and did not subtract the "
+               f"{_fmt(p.available)} units available in WMS. Cut work order {wos} to {_fmt(p.shortfall)}")
+    elif not _differs(p.wo_qty, p.demand):
+        why = (f"MIPS sized the work order to the full {_fmt(p.demand)} demand, ignoring the {_fmt(p.allocated)} "
+               f"allocated and {_fmt(p.available)} available in WMS. Set work order {wos} to {_fmt(p.shortfall)}")
+    elif units > 0:
+        why = f"Raise work order {wos} to {_fmt(p.shortfall)}, or {_fmt(units)} units of demand go unfilled"
+    else:
+        why = f"Cut work order {wos} to {_fmt(p.shortfall)}; as planned it makes {_fmt(-units)} too many"
+    return [Finding(
+        "R05", p.sku, p.sku, p.description, units, p.unit_price,
+        evidence={"total_demand": p.demand, "wms_allocated": p.allocated, "demand_left": p.demand_left,
+                  "wms_available": p.available, "shortfall": p.shortfall, "work_order_qty": p.wo_qty,
+                  "mips_demand": p.mips_demand, "work_orders": wos},
+        recommendation=(
+            f"The shortfall is {_equation(p)}, but MIPS plans {_fmt(p.wo_qty)} on work order {wos} "
+            f"({-units:+,.0f}). {why}."),
+        severity=_sized(units), systems=["MIPS", "WMS", "ODI"])]
+
+
+def r06_missing_work_order(p: SkuPosition) -> list[Finding]:
+    if p.work_orders or p.shortfall <= config.QTY_TOLERANCE_UNITS:
+        return []
+    return [Finding(
+        "R06", p.sku, p.sku, p.description, p.shortfall, p.unit_price,
+        evidence={"total_demand": p.demand, "wms_allocated": p.allocated, "wms_available": p.available,
+                  "shortfall": p.shortfall, "odi_work_orders": ", ".join(sorted(p.odi_wo_qty)) or None},
+        recommendation=(
+            f"Demand needs {_fmt(p.shortfall)} more units ({_equation(p)}), but MIPS has no work order for "
+            f"{p.sku}. Create a work order for {_fmt(p.shortfall)} units, or the orders ship short."),
+        severity="High", systems=["MIPS", "ODI"])]
+
+
+# --------------------------------------------------------------------------
+# 5. The work order reaches ODI, and every demand line is allocated or produced
+# --------------------------------------------------------------------------
+
+def r07_odi_work_order(p: SkuPosition) -> list[Finding]:
+    out = []
+    mips = {w.wo: w for w in p.work_orders}
+    for wo, odi_qty in p.odi_wo_qty.items():
+        rows = [e.entry_id for e in p.odi if e.wo == wo]
+        w = mips.get(wo)
+        if w is None:
+            out.append(Finding(
+                "R07", wo, p.sku, p.description, odi_qty, p.unit_price,
+                evidence={"odi_work_order": wo, "odi_work_order_qty": odi_qty, "odi_rows": len(rows),
+                          "mips_work_orders": ", ".join(p.wo_numbers) or None},
+                recommendation=(
+                    f"ODI maps {len(rows)} demand {'line' if len(rows) == 1 else 'lines'} to work order {wo} "
+                    f"({_fmt(odi_qty)} units), but MIPS has no such work order. Production and batches follow "
+                    f"MIPS: re-link the ODI rows to the MIPS work order, or restore it in MIPS."),
+                severity="Medium", systems=["MIPS", "ODI"]))
             continue
-        price = positions[r.sku].unit_price if r.sku in positions else config.DEFAULT_UNIT_PRICE
-        base = re.sub(r"A$", "", r.formula_type)
-        # A moved run shows up as a zero, no-shift copy whose formula (± 'A' alt suffix) actually ran
-        # somewhere else: on another line, on another production day, or in another run sequence.
-        candidates = [(x, m) for x in real if re.sub(r"A$", "", x.formula_type) == base
-                      for m in [_move(r, x)] if m]
-        moved_to, move = min(candidates, key=lambda c: MOVES.index(c[1]), default=(None, None))
-        if r.shift is None and moved_to:
-            what, where = _moved_text(r, moved_to, move)
+        stale = [e.entry_id for e in p.odi if e.wo == wo and _differs(e.wo_qty, w.wo_qty)]
+        if stale:
+            diff = w.wo_qty - odi_qty
             out.append(Finding(
-                "R04", f"{r.formula_type}-{r.sku}", r.sku, r.description, 0, price,
-                evidence={"ghost_run": _run_label(r), "actual_run": _run_label(moved_to),
-                          "actual_run_sku": moved_to.sku, "moved_to_another": move},
+                "R07", wo, p.sku, p.description, diff, p.unit_price,
+                evidence={"work_order": wo, "mips_work_order_qty": w.wo_qty, "odi_work_order_qty": odi_qty,
+                          "odi_rows_stale": len(stale)},
                 recommendation=(
-                    f"Run {r.formula_type} was moved {what} ({moved_to.formula_type}). A zero-quantity copy "
-                    f"remains {where}. Confirm inventory and WMS work-order allocations moved with the run, "
-                    f"then remove the ghost entry."),
-                systems=["MIPS", "ODI"], base_priority=1000))
-        else:
-            out.append(Finding(
-                "R03", f"{r.formula_type}-{r.sku}", r.sku, r.description, 0, price,
-                evidence={"run": _run_label(r), "item_structure": r.item_structure},
-                recommendation=(
-                    f"{r.description} is scheduled in run {r.formula_type} with zero demand and zero "
-                    f"output. If inventory was applied to this line it never reduces real demand; move any "
-                    f"allocation to the active line and close the blind line."),
+                    f"MIPS has work order {wo} at {_fmt(w.wo_qty)}, but {len(stale)} ODI "
+                    f"{'row still carries' if len(stale) == 1 else 'rows still carry'} {_fmt(odi_qty)} "
+                    f"({diff:+,.0f}). Re-send the work order from MIPS to ODI so batches are mixed for the "
+                    f"current quantity."),
                 systems=["MIPS", "ODI"]))
     return out
 
 
-def r12_r13_wms_reports(src: SourceData) -> list[Finding]:
+def r08_uncovered_lines(p: SkuPosition) -> list[Finding]:
     out = []
-    unscanned = [o for o in src.fill_orders if o.shipped_qty > 0 and o.loaded_qty == 0]
-    if unscanned:
-        units = sum(o.shipped_qty for o in unscanned)
+    for e in p.odi:
+        gap = e.qty - e.allocated
+        if e.wo or gap <= config.QTY_TOLERANCE_UNITS:
+            continue
+        what = f"sales order {e.ref}" if e.is_sales_order else f"forecast {e.ref}"
         out.append(Finding(
-            "R12", "PLANT", "", "All shipments", units, 0.0,
-            evidence={"orders": len(unscanned), "of_total_orders": len(src.fill_orders),
-                      "shipped_units": units},
+            "R08", e.entry_id, p.sku, p.description, gap, p.unit_price,
+            evidence={"odi_entry": e.entry_id, "demand_line": what, "odi_qty": e.qty, "allocated": e.allocated,
+                      "mips_work_orders": ", ".join(p.wo_numbers) or None},
             recommendation=(
-                f"{len(unscanned)} of {len(src.fill_orders)} orders ({_fmt(units)} units) show Shipped with "
-                f"Loaded = 0. Trailer load scans are missing, so shipment allocation cannot be traced "
-                f"ticket-to-trailer. Confirm the ship transactions reached Oracle within the 10-minute SLA "
-                f"and reinstate load scanning."),
-            systems=["WMS", "Oracle"], base_priority=5000))
-    item_total = sum(i.order_qty for i in src.wms_items.values())
-    if src.fill_report_total and abs(item_total - src.fill_report_total) > config.QTY_TOLERANCE_UNITS:
-        diff = src.fill_report_total - item_total
-        out.append(Finding(
-            "R13", "FILL-VS-ITEM", "", "WMS report totals", diff, config.DEFAULT_UNIT_PRICE,
-            evidence={"fill_rate_total": src.fill_report_total, "item_summary_total": item_total},
-            recommendation=(
-                f"The WMS Fill Rate report totals {_fmt(src.fill_report_total)} units but the Order Summary by "
-                f"Item totals {_fmt(item_total)} ({diff:+,.0f}). An order line is missing from one extract or "
-                f"was changed between report runs. Reconcile at order-line level before financial close."),
-            systems=["WMS"], base_priority=1000))
-    for item in src.wms_items.values():
-        if item.report_total_order_qty and item.report_total_order_qty != item.order_qty:
-            out.append(Finding(
-                "R13", f"ITEM-{item.sku}", item.sku, item.description,
-                item.report_total_order_qty - item.order_qty, config.DEFAULT_UNIT_PRICE,
-                evidence={"printed_total": item.report_total_order_qty, "sum_of_lines": item.order_qty},
-                recommendation="Report subtotal does not equal the sum of customer lines; re-extract the report.",
-                systems=["WMS"]))
+                f"ODI row {e.entry_id} ({what}, {_fmt(e.qty)} units) has {_fmt(e.allocated)} allocated and no work "
+                f"order, so {_fmt(gap)} units are neither in stock nor in production. "
+                + (f"Link the row to work order {p.wo_numbers[0]}." if len(p.wo_numbers) == 1 else
+                   "Allocate WMS stock to it or link it to a work order.")),
+            severity=_sized(gap), systems=["ODI", "MIPS", "WMS"]))
     return out
 
 
-def r14_batches(src: SourceData) -> list[Finding]:
-    out = []
-    for b in src.batches:
-        if b.sched_batches and b.actual_batches != b.sched_batches:
-            diff = b.actual_batches - b.sched_batches
-            pieces = b.theo_pieces / b.actual_batches * diff if b.actual_batches else 0
-            out.append(Finding(
-                "R14", f"{b.formula_type}-{b.line}", "", b.description, 0, 0.0,
-                evidence={"formula": b.formula_type, "line": b.line, "shift": b.shift,
-                          "scheduled": b.sched_batches, "mixed": b.actual_batches,
-                          "approx_extra_pieces": round(pieces)},
-                recommendation=(
-                    f"{b.formula_type} ({b.description}, {b.line}) mixed {b.actual_batches:.0f} batches vs "
-                    f"{b.sched_batches:.0f} scheduled ({diff:+.0f}, ≈{pieces:,.0f} pieces). Record the reason "
-                    f"(recovery/rework) so extra output is expected in WMS and not treated as unplanned."),
-                systems=["MIPS", "ODI"], base_priority=500))
-    return out
-
-
-def r15_key_hygiene(src: SourceData) -> list[Finding]:
-    dirty = [l for l in src.mips if l.raw_sku != l.raw_sku.strip()]
-    if not dirty:
+def r09_allocation(p: SkuPosition) -> list[Finding]:
+    if not p.stock or not p.odi or not _differs(p.odi_allocated, p.allocated):
         return []
-    by_source = sorted({l.source_system for l in dirty})
+    diff = p.allocated - p.odi_allocated
+    lines = "; ".join(f"{e.ref} {_fmt(e.allocated)}" for e in p.odi if e.allocated)
     return [Finding(
-        "R15", "MIPS-FG-REF", "", "MIPS FG Oracle Ref", 0, 0.0,
-        evidence={"lines_with_padding": len(dirty), "of_lines": len(src.mips), "source_systems": by_source},
+        "R09", p.sku, p.sku, p.description, diff, p.unit_price,
+        evidence={"wms_allocated": p.allocated, "odi_allocated": p.odi_allocated,
+                  "odi_allocated_lines": lines or None},
         recommendation=(
-            f"{len(dirty)} of {len(src.mips)} MIPS lines (from {', '.join(by_source)}) carry a padded FG "
-            f"Oracle Ref (e.g. '{dirty[0].raw_sku}'). Exact-match joins to WMS/Oracle silently fail; trim at "
-            f"the interface. The agent normalises keys in the meantime."),
-        systems=["MIPS"])]
+            f"WMS has {_fmt(p.allocated)} units allocated to orders, but the ODI mapping shows "
+            f"{_fmt(p.odi_allocated)} ({diff:+,.0f}). WMS holds all on-hand stock, so it is the reference: update "
+            f"the ODI allocation for the order WMS reserved, then re-check the MIPS demand."),
+        severity="Medium", systems=["WMS", "ODI", "MIPS"])]
 
 
 # --------------------------------------------------------------------------
-# Real-time rules (event feed only: the extracts carry no tickets or postings)
+# 4, 7, 8. WMS balances; the plant mixes what was scheduled and wraps before shipping
 # --------------------------------------------------------------------------
 
-def _unposted(src: SourceData) -> list:
-    posted = {o.source_ref for o in src.oracle_txns if o.status == "POSTED"}
-    return [t for t in src.wms_txns if t.txn not in posted and t.at is not None]
+def r10_wms_balance(p: SkuPosition) -> list[Finding]:
+    out = []
+    for s in p.stock:
+        diff = s.on_hand - (s.available + s.allocated)
+        if not _differs(diff, 0):
+            continue
+        out.append(Finding(
+            "R10", s.inventory_id, p.sku, p.description, diff, p.unit_price,
+            evidence={"inventory": f"{s.inventory_id} ({s.facility} {s.locator})", "on_hand": s.on_hand,
+                      "available": s.available, "allocated": s.allocated},
+            recommendation=(
+                f"WMS shows {_fmt(s.on_hand)} on hand at {s.locator or s.facility}, but available "
+                f"({_fmt(s.available)}) plus allocated ({_fmt(s.allocated)}) is {_fmt(s.available + s.allocated)} "
+                f"({diff:+,.0f}). The shortfall is sized from available stock: count the locator and correct the "
+                f"quantity that is wrong before the next work order is planned."),
+            severity=_sized(diff, "High", "Medium"), systems=["WMS"]))
+    return out
 
 
-def r18_unposted(src: SourceData, positions: dict[str, SkuPosition]) -> list[Finding]:
-    if src.as_of is None:
+def r11_batches(p: SkuPosition) -> list[Finding]:
+    out, seen = [], set()
+    for e in p.odi:
+        if not e.wo or e.wo in seen or not e.sched_batches:
+            continue
+        seen.add(e.wo)
+        if _differs(e.act_batches, e.sched_batches):
+            diff = e.act_batches - e.sched_batches
+            out.append(Finding(
+                "R11", e.wo, p.sku, p.description, 0, p.unit_price,
+                evidence={"work_order": e.wo, "formula": e.oracle_type, "line": e.line, "shift": e.shift,
+                          "scheduled": e.sched_batches, "mixed": e.act_batches},
+                recommendation=(
+                    f"Work order {e.wo} ({e.mips_description or p.description}, {e.line} {e.shift}) mixed "
+                    f"{_fmt(e.act_batches)} batches against {_fmt(e.sched_batches)} scheduled in MIPS ({diff:+,.0f}). "
+                    f"Record the reason (rework, recovery) so the {'extra' if diff > 0 else 'missing'} output is "
+                    f"expected in WMS."),
+                systems=["ODI", "MIPS"], base_priority=500))
+    return out
+
+
+def r12_late_wrap(p: SkuPosition) -> list[Finding]:
+    late: dict[str, list] = {}
+    for e in p.odi:
+        if e.is_sales_order and e.wo and e.wrap_end and e.requested_ship and e.wrap_end.date() > e.requested_ship:
+            late.setdefault(e.wo, []).append(e)
+    out = []
+    for wo, rows in late.items():
+        units = sum(e.qty - e.allocated for e in rows)
+        first = min(e.requested_ship for e in rows)
+        out.append(Finding(
+            "R12", wo, p.sku, p.description, units, p.unit_price,
+            evidence={"work_order": wo, "wrapping_end": f"{rows[0].wrap_end:%m/%d %H:%M}",
+                      "earliest_ship_date": f"{first:%m/%d}", "late_orders": len(rows),
+                      "orders": ", ".join(e.ref for e in rows)},
+            recommendation=(
+                f"Work order {wo} finished wrapping {rows[0].wrap_end:%m/%d %H:%M}, after the requested ship date of "
+                f"{len(rows)} {'order' if len(rows) == 1 else 'orders'} (earliest {first:%m/%d}; {_fmt(units)} units). "
+                f"Finished goods must reach WMS before the ship date: move the run earlier or agree a new ship date "
+                f"with the customers."),
+            severity=_sized(units), systems=["ODI", "MIPS", "WMS"]))
+    return out
+
+
+def r13_item_codes(p: SkuPosition) -> list[Finding]:
+    issues = []
+    if not p.in_item_master:
+        issues.append(f"{p.sku} is not in the Oracle item master")
+    wo_codes = {w.buss_code for w in p.work_orders if w.buss_code}
+    if p.buss_codes and wo_codes and p.buss_codes != wo_codes:
+        issues.append(f"BUSS orders use FG BUSS Code {', '.join(sorted(p.buss_codes))}, MIPS uses "
+                      f"{', '.join(sorted(wo_codes))}")
+    elif len(p.buss_codes) > 1:
+        issues.append(f"BUSS orders carry {len(p.buss_codes)} FG BUSS Codes ({', '.join(sorted(p.buss_codes))})")
+    odd = sorted({e.item for e in p.odi if e.item and e.item != p.sku})
+    if odd:
+        issues.append(f"ODI rows for {p.sku} carry Item Number {', '.join(odd)}")
+    if not issues:
         return []
-    sla = dt.timedelta(minutes=config.ORACLE_POSTING_SLA_MINUTES)
-    oracle = {o.source_ref: o for o in src.oracle_txns}
-    out = []
-    for t in _unposted(src):
-        waited = src.as_of - t.at
-        if waited < sla:
-            continue
-        o = oracle.get(t.txn)
-        p = positions.get(t.sku)
-        why = (f"Oracle rejected it ({o.status}{': ' + o.error if o.error else ''})" if o
-               else "Oracle has no transaction for it")
-        out.append(Finding(
-            "R18", t.txn, t.sku, p.description if p else t.sku, t.qty,
-            p.unit_price if p else config.DEFAULT_UNIT_PRICE,
-            evidence={"wms_transaction": f"{t.txn} {t.txn_type} {_fmt(t.qty)}", "wms_time": f"{t.at:%m/%d %H:%M}",
-                      "minutes_waiting": int(waited.total_seconds() // 60),
-                      "oracle_status": o.status if o else "not received", "oracle_error": o.error if o else None,
-                      "ticket": t.ticket or None, "order": t.order or None},
-            recommendation=(
-                f"WMS {t.txn_type.replace('_', ' ').lower()} {t.txn} ({_fmt(t.qty)} units, {t.at:%H:%M}) is "
-                f"{int(waited.total_seconds() // 60)} minutes old and {why}. Oracle inventory and finance are "
-                f"understated until it posts: resubmit it through the integration and check the interface "
-                f"error queue."),
-            systems=["WMS", "Oracle"], base_priority=2000))
-    return out
+    return [Finding(
+        "R13", p.sku, p.sku, p.description, 0, p.unit_price,
+        evidence={"issues": "; ".join(issues), "buss_codes": ", ".join(sorted(p.buss_codes)) or None,
+                  "mips_buss_codes": ", ".join(sorted(wo_codes)) or None},
+        recommendation=(
+            f"{'; '.join(issues)}. Joins between systems rely on these codes: align them with the Oracle item "
+            f"master (the system of record)."),
+        systems=["Oracle", "BUSS", "MIPS", "ODI"])]
 
 
-def next_deadline(src: SourceData) -> dt.datetime | None:
-    """The next plant time at which an unposted WMS transaction breaches the R18 window."""
-    if src.as_of is None:
-        return None
-    sla = dt.timedelta(minutes=config.ORACLE_POSTING_SLA_MINUTES)
-    due = [t.at + sla for t in _unposted(src) if t.at + sla > src.as_of]
-    return min(due) if due else None
-
-
-def r19_returns(src: SourceData, positions: dict[str, SkuPosition]) -> list[Finding]:
-    returned: dict[str, float] = defaultdict(float)
-    for t in src.wms_txns:
-        if t.txn_type == "RETURN_TO_PLANT" and t.ticket:
-            returned[t.ticket] += t.qty
-    tickets = {t.ticket: t for t in src.tickets}
-    out = []
-    for nbr, qty in returned.items():
-        tk = tickets.get(nbr)
-        if tk is None or qty - tk.returned_qty <= config.QTY_TOLERANCE_UNITS:
-            continue
-        gap = qty - tk.returned_qty
-        p = positions.get(tk.sku)
-        should = tk.received_qty - qty
-        out.append(Finding(
-            "R19", nbr, tk.sku, p.description if p else tk.sku, gap, p.unit_price if p else config.DEFAULT_UNIT_PRICE,
-            evidence={"ticket": f"{nbr} ({tk.run_code or 'no run'}, {tk.location or 'no location'})",
-                      "received": tk.received_qty, "returned_by_transactions": qty,
-                      "returned_on_ticket": tk.returned_qty, "net_received_on_ticket": tk.net_received_qty,
-                      "net_received_should_be": should},
-            recommendation=(
-                f"WMS booked {_fmt(qty)} units returned to the plant against ticket {nbr}, but the ticket still "
-                f"shows {_fmt(tk.net_received_qty)} received, not {_fmt(should)}. Reduce the ticket's net received "
-                f"quantity by {_fmt(gap)}. Until then WMS can allocate {_fmt(gap)} units that are back at the "
-                f"plant, and the returned units are missing from the production requirement."),
-            severity="High" if gap >= 500 else "Medium",
-            systems=["WMS", "MIPS"]))
-    return out
+SKU_RULES = [r01_r02_r03_demand_capture, r04_mips_demand, r05_work_order_size, r06_missing_work_order,
+             r07_odi_work_order, r08_uncovered_lines, r09_allocation, r10_wms_balance, r11_batches,
+             r12_late_wrap, r13_item_codes]
 
 
 def run_all(src: SourceData, positions: dict[str, SkuPosition]) -> list[Finding]:
@@ -551,10 +405,4 @@ def run_all(src: SourceData, positions: dict[str, SkuPosition]) -> list[Finding]
     for p in positions.values():
         for rule in SKU_RULES:
             findings.extend(rule(p))
-    findings.extend(r03_r04_run_structure(src, positions))
-    findings.extend(r12_r13_wms_reports(src))
-    findings.extend(r14_batches(src))
-    findings.extend(r15_key_hygiene(src))
-    findings.extend(r18_unposted(src, positions))
-    findings.extend(r19_returns(src, positions))
     return findings

@@ -6,7 +6,7 @@
 Every control (set, advance, rate, pause, resume) re-anchors at the current
 wall time, so simulated time never jumps except when asked to. With no clock
 stored yet, simulated time is wall time. Rules and SLAs that depend on time
-(the 15-minute acknowledgment, later R18's 10-minute posting window) read this
+(the 15-minute acknowledgment) read this
 clock in event mode, so a shift can be fast-forwarded or frozen for a demo.
 """
 from __future__ import annotations

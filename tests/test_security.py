@@ -214,19 +214,19 @@ class SimulatorSignInTest(unittest.TestCase):
         self.client = TestClient(simulator(log.path))
 
     def test_operator_signs_in_with_an_account(self):
-        self.assertEqual(self.client.get("/t/wms.order", follow_redirects=False).status_code, 303)
+        self.assertEqual(self.client.get("/t/wms.inventory", follow_redirects=False).status_code, 303)
         r = self.client.post("/signin", data={"username": "ana", "password": "wrong-password"})
         self.assertEqual(r.status_code, 401)
         r = self.client.post("/signin", data={"username": "ana", "password": PASSWORD}, follow_redirects=False)
         self.assertEqual(r.status_code, 303)
-        self.assertEqual(self.client.get("/t/wms.order").status_code, 200)
+        self.assertEqual(self.client.get("/t/wms.inventory").status_code, 200)
 
     def test_operator_cookie_cannot_be_forged(self):
         self.client.cookies.set("sim_operator", "Mallory")
-        self.assertEqual(self.client.get("/t/wms.order", follow_redirects=False).status_code, 303)
+        self.assertEqual(self.client.get("/t/wms.inventory", follow_redirects=False).status_code, 303)
         a = account("ana")
         self.client.cookies.set("sim_session", security.sign({"u": a["username"], "s": a["session"]}, "worklist"))
-        self.assertEqual(self.client.get("/t/wms.order", follow_redirects=False).status_code, 303)
+        self.assertEqual(self.client.get("/t/wms.inventory", follow_redirects=False).status_code, 303)
 
     def test_crawler_and_browser_files(self):
         r = self.client.get("/robots.txt")

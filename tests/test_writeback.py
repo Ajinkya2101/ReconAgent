@@ -55,7 +55,9 @@ with mock.patch.object(security, "PBKDF2_ITERATIONS", 1000):   # an accounts fil
     if not users.get("ana"):
         users.add("ana", "Ana", "supervisor", PASSWORD)
 
-NOW = dt.datetime(2026, 11, 6, 20, 0)
+NOW = dt.datetime(2026, 9, 11, 20, 0)
+FLAG = "R02-2263245-1"   # S1: BUSS has Albany at 7,800, ODI still maps 7,200 on ODI-0002
+WO1 = seed.wo_number(seed.DEFAULT_SALES_DATE, 1)
 
 
 def free_port() -> int:
@@ -68,7 +70,7 @@ class WriteBackTest(unittest.TestCase):
     def setUp(self):
         self.log = EventLog(Path(tempfile.mkdtemp(prefix="recon-wb-")) / "events.db")
         seed.seed(self.log)
-        scenarios.run(self.log, scenarios.SCENARIOS["S6"])   # R09 and R10 on 900112
+        scenarios.run(self.log, scenarios.SCENARIOS["S1"])   # R02, R04 and R05 on 76108
         self.sim = simulator(self.log.path)
         port = free_port()
         self.server = uvicorn.Server(uvicorn.Config(self.sim, host="127.0.0.1", port=port, log_level="warning"))
@@ -87,71 +89,115 @@ class WriteBackTest(unittest.TestCase):
         self.store.refresh_if_sources_changed()
         return {f.id for f in self.store.res.findings}
 
-    def test_approved_correction_is_confirmed_by_the_feed(self):
-        _, f = self.store.find("R09-900112")
-        p = self.store.proposal(f)
-        self.assertEqual((p.entity, p.key, p.changes), ("mips.order_line", "ML-0017", {"Order Quantity": 1100}))
-        _, message = self.store.approve("R09-900112", "Pat Planner")
+    def approve(self, flag_id: str) -> str:
+        _, message = self.store.approve(flag_id, "Pat Planner")
         self.assertIn("accepted", message)
-        self.assertNotIn("R09-900112", self.flags())
-        c = self.store.book.for_flag("R09-900112")
-        self.assertEqual([h["status"] for h in c["history"]][-1], "Confirmed")
+        self.assertEqual(self.store.book.for_flag(flag_id)["status"], "Confirmed")
+        return message
+
+    def test_approved_correction_is_confirmed_by_the_feed(self):
+        _, f = self.store.find(FLAG)
+        p = self.store.proposal(f)
+        self.assertEqual((p.entity, p.key, p.changes), ("odi.batch_mapping", "ODI-0002", {"Quantity": 7800}))
+        self.approve(FLAG)
+        self.assertNotIn(FLAG, self.flags())
+        c = self.store.book.for_flag(FLAG)
         self.assertIsNotNone(c["confirmed_seq"])
         self.assertEqual(self.store.decision(f)["decision"], "accept")   # approving accepts the flag
-        src = self.log.current("mips.order_line", "ML-0017")
-        self.assertEqual(src["Order Quantity"], 1100)
-        self.assertNotEqual(src["Last Modify Date Time"], "2026-11-05T20:31:00")   # MIPS stamped it
-        # A correction can cascade: ODI's copy of the sales-order quantity is now behind MIPS.
-        self.assertIn("R16-900112", self.flags())
+        self.assertEqual(self.log.current("odi.batch_mapping", "ODI-0002")["Quantity"], 7800)
+        # ODI is right now; MIPS still plans the old demand and work order, so those flags stay.
+        self.assertTrue({"R04-76108", "R05-76108"} <= self.flags())
 
-    def test_a_reset_retires_earlier_corrections(self):
-        self.store.approve("R09-900112", "Pat Planner")
+    def test_the_whole_chain_is_corrected_system_by_system(self):
+        """ODI, then the MIPS demand, then the work order; the new work order then reaches ODI."""
+        self.approve(FLAG)
+        self.approve("R04-76108")
+        self.assertEqual(self.log.current("mips.work_order", WO1)["Forecast / Order Quantity"], 56235)
+        self.approve("R05-76108")
+        self.assertEqual(self.log.current("mips.work_order", WO1)["Work Order Quantity"], 49235)
+        self.assertIn(f"R07-{WO1}", self.flags())   # every ODI row of the work order still carries 48,635
+        _, f = self.store.find(f"R07-{WO1}")
+        p = self.store.proposal(f)
+        self.assertEqual((p.key, len(p.rows)), ("ODI-0001", 10))   # 11 rows on the work order
+        head = self.log.source_position()[1]
+        self.approve(f"R07-{WO1}")
+        self.assertEqual(self.log.source_position()[1] - head, 11)  # one change per row, one transaction
+        self.assertFalse(any("76108" in x or WO1 in x for x in self.flags()))
+        self.assertTrue(all(self.log.current("odi.batch_mapping", k)["Work Order Quantity"] == 49235
+                            for k in scenarios.ODI_ON_WO))
+
+    def test_inserts_deletes_and_links(self):
+        cases = {"S2": ("R01-2263260-1", "I", "odi.batch_mapping"), "S3": ("R03-ODI-0012", "D", "odi.batch_mapping"),
+                 "S8": ("R06-76108", "I", "mips.work_order"), "S9": ("R08-ODI-0002", "U", "odi.batch_mapping")}
+        for sid, (flag, op, entity) in cases.items():
+            with self.subTest(sid):
+                self.log.reset()
+                seed.seed(self.log)
+                scenarios.run(self.log, scenarios.SCENARIOS[sid])
+                self.assertIn(flag, self.flags())
+                _, f = self.store.find(flag)
+                p = self.store.proposal(f)
+                self.assertEqual((p.op, p.entity), (op, entity))
+                self.approve(flag)
+                self.assertNotIn(flag, self.flags())
+
+    def test_restoring_a_deleted_work_order_clears_the_odi_link(self):
         self.log.reset()
         seed.seed(self.log)
-        scenarios.run(self.log, scenarios.SCENARIOS["S6"])
-        self.assertIn("R09-900112", self.flags())
-        _, f = self.store.find("R09-900112")
+        scenarios.run(self.log, scenarios.SCENARIOS["S8"])
+        self.assertTrue({"R06-76108", f"R07-{WO1}"} <= self.flags())
+        self.approve("R06-76108")   # re-created under the number ODI still maps
+        self.assertEqual(self.log.current("mips.work_order", WO1)["Work Order Quantity"], 48635)
+        self.assertFalse(any("76108" in x or WO1 in x for x in self.flags()))
+
+    def test_a_reset_retires_earlier_corrections(self):
+        self.store.approve(FLAG, "Pat Planner")
+        self.log.reset()
+        seed.seed(self.log)
+        scenarios.run(self.log, scenarios.SCENARIOS["S1"])
+        self.assertIn(FLAG, self.flags())
+        _, f = self.store.find(FLAG)
         self.assertIsNone(self.store.correction(f))           # the old COR-0001 belongs to the old log
         self.assertIsNotNone(self.store.proposal(f))          # so the flag offers a fresh correction
         self.assertEqual(len(self.store.book.items), 1)       # still on file for the record
 
     def test_endpoint_down_then_retry(self):
         self.operator.post("/integration/oic", data={"mode": "down"})
-        _, message = self.store.approve("R09-900112", "Pat Planner")
+        _, message = self.store.approve(FLAG, "Pat Planner")
         self.assertIn("unavailable", message)
-        c = self.store.book.for_flag("R09-900112")
+        c = self.store.book.for_flag(FLAG)
         self.assertEqual(c["status"], "Failed")
-        self.assertIn("R09-900112", self.flags())
+        self.assertIn(FLAG, self.flags())
         self.operator.post("/integration/oic", data={"mode": "accept"})
         self.store.retry(c["id"], "Pat Planner")
-        self.assertNotIn("R09-900112", self.flags())
+        self.assertNotIn(FLAG, self.flags())
         self.assertEqual(self.store.book.items[c["id"]]["status"], "Confirmed")
 
     def test_stale_row_is_refused(self):
-        # MIPS changes the line after the worklist computed its proposal but before approval reaches OIC.
+        # ODI changes the row after the worklist computed its proposal but before approval reaches OIC.
         from recon_agent import corrections
         real_send = corrections.send
 
         def race(c, by):
-            self.log.publish(Change("mips.order_line", "U", "ML-0017", {"Order Quantity": 950}), "cli", NOW)
+            self.log.publish(Change("odi.batch_mapping", "U", "ODI-0002", {"Quantity": 7500}), "cli", NOW)
             return real_send(c, by)
 
         with mock.patch("recon_agent.corrections.send", race):
-            _, message = self.store.approve("R09-900112", "Pat Planner")
+            _, message = self.store.approve(FLAG, "Pat Planner")
         self.assertIn("changed since", message)
-        self.assertEqual(self.store.book.for_flag("R09-900112")["status"], "Failed")
-        self.assertEqual(self.log.current("mips.order_line", "ML-0017")["Order Quantity"], 950)
+        self.assertEqual(self.store.book.for_flag(FLAG)["status"], "Failed")
+        self.assertEqual(self.log.current("odi.batch_mapping", "ODI-0002")["Quantity"], 7500)
 
     def test_slow_integration_keeps_it_sent_until_the_event_arrives(self):
-        self.log.add_fault("delay", source="MIPS", seconds=0.6)
-        self.store.approve("R09-900112", "Pat Planner")
-        c = self.store.book.for_flag("R09-900112")
+        self.log.add_fault("delay", source="ODI", seconds=0.6)
+        self.store.approve(FLAG, "Pat Planner")
+        c = self.store.book.for_flag(FLAG)
         self.assertEqual(c["status"], "Sent")                 # OIC said yes; the feed has not shown it
-        self.assertIn("R09-900112", self.flags())
+        self.assertIn(FLAG, self.flags())
         deadline = time.monotonic() + 5                        # the simulator's pump delivers it
-        while "R09-900112" in self.flags() and time.monotonic() < deadline:
+        while FLAG in self.flags() and time.monotonic() < deadline:
             time.sleep(0.1)
-        self.assertNotIn("R09-900112", self.flags())
+        self.assertNotIn(FLAG, self.flags())
         self.assertEqual(self.store.book.items[c["id"]]["status"], "Confirmed")
 
     def test_only_planners_and_managers_approve(self):
@@ -160,16 +206,16 @@ class WriteBackTest(unittest.TestCase):
             app = worklist()
         sup = TestClient(app)
         sign_in(sup, "sam", "supervisor")
-        self.assertEqual(sup.post("/flags/R09-900112/correction").status_code, 403)
-        detail = sup.get("/row/900112", headers={"HX-Request": "true"}).text
+        self.assertEqual(sup.post(f"/flags/{FLAG}/correction").status_code, 403)
+        detail = sup.get("/row/76108", headers={"HX-Request": "true"}).text
         self.assertIn("Proposed correction", detail)
         self.assertIn("A planner or manager approves", detail)
         planner = TestClient(app)
         sign_in(planner, "pat", "planner")
-        r = planner.post("/api/corrections", json={"flag_id": "R09-900112"})
+        r = planner.post("/api/corrections", json={"flag_id": FLAG})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["correction"]["status"], "Confirmed")
-        self.assertEqual(planner.get(f"/api/corrections/{r.json()['correction']['id']}").json()["key"], "ML-0017")
+        self.assertEqual(planner.get(f"/api/corrections/{r.json()['correction']['id']}").json()["key"], "ODI-0002")
 
 
 class ResetSimulationTest(unittest.TestCase):
@@ -183,14 +229,14 @@ class ResetSimulationTest(unittest.TestCase):
         store = app.state.store
         client = TestClient(app)
         sign_in(client, "rita", "planner", "Rita")
-        # Change the day: fix route 27 (900107 drops out), claim and decide on other rows.
-        log.publish(Change("wms.item_order", "U", "WL-0015", {"Order Qty": 800}), "test", NOW)
+        # Change the day: a WMS count breaks 76108; claim and decide on another row.
+        log.publish(Change("wms.inventory", "U", "INV-0001", {"On hand": 7373}), "test", NOW)
         store.refresh_if_sources_changed()
-        self.assertNotIn("900107", store.rows)
-        self.assertEqual(client.post("/row/900102/claim", headers={"HX-Request": "true"}).status_code, 200)
-        client.post("/flags/R05-900102/ack", headers={"HX-Request": "true"})
-        client.post("/flags/R05-900102/decision", data={"decision": "reject"}, headers={"HX-Request": "true"})
-        self.assertIn("R05-900102", feedback.load()["decisions"])
+        self.assertIn("76108", store.rows)
+        self.assertEqual(client.post("/row/950513/claim", headers={"HX-Request": "true"}).status_code, 200)
+        client.post("/flags/R05-950513/ack", headers={"HX-Request": "true"})
+        client.post("/flags/R05-950513/decision", data={"decision": "reject"}, headers={"HX-Request": "true"})
+        self.assertIn("R05-950513", feedback.load()["decisions"])
         version = store.version
 
         page = client.get("/").text
@@ -199,13 +245,13 @@ class ResetSimulationTest(unittest.TestCase):
         self.assertEqual(r.status_code, 204)
         self.assertEqual(r.headers["HX-Redirect"], "/")
 
-        self.assertIn("900107", store.rows)                    # back to the seeded flags
+        self.assertNotIn("76108", store.rows)                  # back to the seeded flags
         self.assertEqual(log.source_position()[1], seed.seed(EventLog(Path(tempfile.mkdtemp()) / "e.db")))
         self.assertEqual(store.claims, {})
         self.assertEqual(store.acks, {})
-        self.assertIsNone(store.rows["900102"].claim)
+        self.assertIsNone(store.rows["950513"].claim)
         self.assertEqual(feedback.load()["decisions"], {})
-        self.assertEqual(store.find("R05-900102")[1].status, "Open")
+        self.assertEqual(store.find("R05-950513")[1].status, "Open")
         other = client.get(f"/changes?since={version}", headers={"HX-Request": "true"}).text
         self.assertNotIn("Simulation reset", other)            # the one who reset is not told
         self.assertIn("__reset__", store.changes_since(version, "someone else"))
