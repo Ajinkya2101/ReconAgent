@@ -138,7 +138,32 @@ Each flag tells you:
 - **Units and dollars.** The quantity involved and its retail value at risk.
 - **Explanation.** What is wrong, in which system, and what to do. It's labelled *Rule text* or *AI explanation*.
 - **Owner and scenario.** Who should act (e.g. *IT / Integration*, *Warehouse / WMS*) and which known problem this is.
+- **System accountability.** Which system caused the problem, and what each of the three systems did (see below).
 - **Evidence.** The actual values from each system that triggered the rule.
+
+#### System accountability
+
+Every flag says where the problem started and what it does to the business. The rules work this out from the same numbers as the flag, so it is there with or without the AI, and the AI cannot change it.
+
+| Item | What it tells you |
+|---|---|
+| **Impact** | The effect on the business: *Over-production*, *Under-production*, *Stranded surplus* (made but not carried forward), *Short shipment*, *Overstated inventory*, *Traceability gap*, *Financial posting gap* (Oracle doesn't have it), or *Data integrity*. |
+| **Started in** | The system where the error started. *Integration* means the fault is in the connection between two systems; the connection is named next to it, e.g. *WMS → Oracle*. |
+| **Failure** | How it misfired, e.g. *Planning logic*, *Stale data*, *Missing transaction*, *Master data*. |
+| **Attribution** | How sure the rules are. *Certain*: the data proves it. *Likely*: the usual cause, but another is possible, so check the record the AI names under *Confirm with*. *Undetermined*: the data can't say which system is wrong. |
+
+Under it, each system gets one line: **MIPS**, **ODI** and **WMS** always, and **Oracle** when it's involved.
+
+| Role | Meaning |
+|---|---|
+| **Misfired** (filled label) | The error started here. |
+| **Affected** (outlined) | Holds or acts on a wrong value because of it. |
+| **Conflicting** (outlined) | Disagrees with another system, and the data can't say which one is wrong. |
+| **Reference** | Holds the value the others should match. |
+| **To check** | The rule can't see this system, but it may carry the error. |
+| **Not involved** | Plays no part in this error. |
+
+For example, when a customer raises an order in WMS after MIPS last synced (R09), the flag reads: *Under-production · started in MIPS (WMS → MIPS) · Stale data · Likely*, with MIPS *Misfired* ("Still plans 3,500; WMS has 3,700 on order"), ODI *Affected* and WMS *Reference*.
 
 Above the flags, the **reconciled position** is the bakery's core equation for the SKU:
 
@@ -226,6 +251,19 @@ The correction then moves through these states, shown on the flag with times and
 ### 4.7 AI explanations
 
 The worklist first shows rule-written text, so it's usable immediately. In the background it asks the AI model (Gemini on Oracle Cloud) to write clearer explanations and the shift briefing. When they're ready, the top bar shows **AI explanations ready · Reload**.
+
+An AI explanation adds a box under the system accountability:
+
+- **How it happened.** The chain of events in order, one system per step, starting where the error started. For example: *MIPS* ordered 2,000 on the recovery run when 800 were still needed, then *ODI* built it and wrapped 7,200 against 6,000 demand, so *WMS* receives 1,200 surplus units.
+- **Impact.** The business effect, with its units and dollars.
+- **Confirm with.** The one source record that proves the attribution, e.g. a MIPS line, an ODI run, a WMS ticket or an Oracle posting.
+- **Linked flags.** Other flags with the same cause, e.g. R09 and R10 on the same SKU.
+
+**Checking the AI.** Before an explanation is shown, every number in it is compared with the engine's numbers. If they all match, the box says *All 7 figures match the engine's data*. If the AI wrote a number the engine never produced, the box says so in bold (*1 figure not in the engine's data: 1,350. Check before acting.*). Treat that number as wrong. If the AI's chain of events starts in a different system from the one the rules name, the box says that too. The rules' answer is the one shown under *Started in*.
+
+**Audit trail.** Every AI explanation, briefing and assistant answer shows an **Audit** number (e.g. `db427ab6e4f8`) and the time it was written. That number finds the full record in the AI audit log (`ai_audit.jsonl`, next to the decisions file): what the AI was sent, what it answered, the checks, and for the assistant who asked and what it looked up. If the log can't be written, the AI text isn't shown and the rule text stays.
+
+The expanded shift briefing ends with **Where today's flags started**: flags, High flags, units and dollars at risk for each system. It's the system-level view of which system caused today's exceptions.
 
 To keep costs and noise down, the worklist doesn't ask the AI after every change:
 - It waits until the data has been quiet for 20 seconds (2 minutes at most).

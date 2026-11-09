@@ -58,6 +58,8 @@ class Finding:
     status: str = "Open"
     systems: list[str] = field(default_factory=list)
     base_priority: float = 50.0  # floor so zero-$ control findings still rank
+    # Which system misfired and what each system did (accountability.py), set by the engine.
+    accountability: dict = field(default_factory=dict)
 
     @property
     def id(self) -> str:

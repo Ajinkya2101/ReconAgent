@@ -326,8 +326,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.post("/ask", response_class=HTMLResponse)
     def ask_html(request: Request, question: str = Form(...)):
-        require_user(request)
-        return render(request, "_answer.html", question=question, answer=answer(question))
+        user = require_user(request)
+        return render(request, "_answer.html", question=question, answer=answer(question, user))
 
     # --- Reconciliation API (JSON) --------------------------------------------------
     @app.get("/api/positions/{sku}")
@@ -348,7 +348,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         return [{"id": f.id, "rule": f.rule, "title": f.title, "severity": f.severity, "sku": f.sku,
                  "item": f.description, "units": f.units, "dollars": round(f.dollars, 2),
                  "priority": round(f.priority, 1), "status": f.status, "evidence": f.evidence,
-                 "recommendation": f.recommendation, "explanation": f.narrative} for f in
+                 "recommendation": f.recommendation, "explanation": f.narrative,
+                 "accountability": f.accountability,
+                 # The model's detail and its checks, only where the model wrote this flag's text.
+                 "ai": store.res.narration["by_id"].get(f.id) if f.id in store.ai_ids else None} for f in
                 sorted(flags, key=lambda f: f.priority, reverse=True)]
 
     @app.post("/api/flags/{flag_id}/decision")
@@ -398,8 +401,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.post("/api/ask")
     async def api_ask(request: Request):
-        require_user(request)
-        return answer((await request.json()).get("question", ""))
+        user = require_user(request)
+        return answer((await request.json()).get("question", ""), user)
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
@@ -414,7 +417,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                             headers={"HX-Retarget": "#toast", "HX-Reswap": "innerHTML"})
 
     # --- assistant -------------------------------------------------------------------
-    def answer(question: str) -> dict:
+    def answer(question: str, user: dict) -> dict:
         question = question.strip()[:500]
         res = store.res
         mentioned = [k for k in dict.fromkeys(m.lstrip("0") for m in re.findall(r"\b\d{3,7}\b", question))
@@ -422,13 +425,15 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         ai_error = ""
         if ai.credentials_available():
             try:
-                text = ai.ask(question, res.positions, res.findings)
+                got = ai.ask_audited(question, res.positions, res.findings, user=user["username"])
             except ai.AIError as e:
                 ai_error = str(e)
             else:
+                text = got["text"]
                 linked = [k for k in dict.fromkeys(m.lstrip("0") for m in re.findall(r"\b\d{3,7}\b", text))
                           if k in store.rows]
-                return {"source": "ai", "text": text, "rows": [store.rows[k] for k in linked[:6]]}
+                return {"source": "ai", "text": text, "rows": [store.rows[k] for k in linked[:6]],
+                        "audit_id": got["audit_id"], "check": got["check"]}
         if mentioned:
             rows = [store.rows[k] for k in mentioned[:3]]
             return {"source": "rules", "text": "", "rows": rows, "ai_error": ai_error}

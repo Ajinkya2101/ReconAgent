@@ -17,6 +17,54 @@
   <p class="flag-owner"><span>Owner <b>{{ nar.owner }}</b></span><span>{{ "Root cause" if by_ai else "Scenario" }} <b>{{ nar.root_cause }}</b></span></p>
   {% endif %}
 
+  {% set acc = f.accountability %}
+  {% if acc %}
+  <section class="acct" aria-label="System accountability">
+    <dl class="acct-head">
+      <div><dt>Impact</dt><dd>{{ acc.impact }}{% if acc.impact_units %} · {{ acc.impact_units|num }} units{% endif %}</dd></div>
+      <div><dt>Started in</dt><dd>{% if acc.origin == "Undetermined" %}Undetermined{% else %}<span class="code">{{ acc.origin }}</span>{% endif %}{% if acc.handoff %} <small>{{ acc.handoff }}</small>{% endif %}</dd></div>
+      <div><dt>Failure</dt><dd>{{ acc.failure_type }}</dd></div>
+      <div><dt>Attribution</dt><dd>{{ acc.basis|capitalize }}</dd></div>
+    </dl>
+    <p class="acct-point">{{ acc.failure_point }}</p>
+    <table class="acct-systems">
+      <caption class="sr">What each system did</caption>
+      <tbody>
+        {% for s in acc.systems %}
+        <tr class="acct-row role--{{ s.role|lower|replace(' ', '-') }}">
+          <th scope="row"><span class="code">{{ s.system }}</span></th>
+          <td><span class="role">{{ s.role }}</span></td>
+          <td>{{ s.detail or "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  {% if by_ai and (nar.cause_chain or nar.impact or nar.verify) %}
+  <section class="ai-trail" aria-label="AI analysis">
+    {% if nar.cause_chain %}
+    <h5>How it happened</h5>
+    <ol class="chain">
+      {% for s in nar.cause_chain %}<li><span class="code">{{ s.system }}</span> {{ s.step }}</li>{% endfor %}
+    </ol>
+    {% endif %}
+    {% if nar.impact %}<p><b>Impact</b> {{ nar.impact }}</p>{% endif %}
+    {% if nar.verify %}<p><b>Confirm with</b> {{ nar.verify }}</p>{% endif %}
+    {% if nar.linked_findings %}<p><b>Linked flags</b> {% for x in nar.linked_findings %}<span class="code">{{ x }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    {% set chk = nar.check or {} %}
+    <p class="audit-line">
+      {% if chk.unverified_figures %}<span class="audit-warn">{{ chk.unverified_figures|length }} {{ "figure" if chk.unverified_figures|length == 1 else "figures" }} not in the engine's data: {{ chk.unverified_figures|join(", ") }}. Check before acting.</span>
+      {% elif chk.figures_checked %}<span>{{ "The 1 figure matches" if chk.figures_checked == 1 else "All " ~ chk.figures_checked ~ " figures match" }} the engine's data.</span>
+      {% endif %}
+      {% if chk.chain_starts_at_origin == false %}<span class="audit-warn">The AI's account starts in {{ nar.cause_chain[0].system }}; the rules attribute this to {{ acc.origin }}.</span>{% endif %}
+      {% if nar.evidence_used %}<span>Evidence used: {{ nar.evidence_used|map("humanize")|join(", ") }}</span>{% endif %}
+      {% if nar.audit_id %}<span>Audit <span class="code">{{ nar.audit_id }}</span>{% if nar.generated_at %} · {{ nar.generated_at[:16]|replace("T", " ") }} UTC{% endif %}</span>{% endif %}
+    </p>
+  </section>
+  {% endif %}
+
   <dl class="evidence">
     {% for k, v in f.evidence.items() %}
     <div><dt>{{ k|humanize }}</dt><dd>{% for line in v|evidence_lines %}<span>{{ line }}</span>{% endfor %}</dd></div>

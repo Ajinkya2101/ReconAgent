@@ -15,6 +15,14 @@
   {% if expanded %}
   <div class="briefing-body">
     <p>{{ n.shift_briefing }}</p>
+    {% if store.narration_is_ai %}
+    {% set bc = n.briefing_check or {} %}
+    <p class="audit-line">
+      {% if bc.unverified_figures %}<span class="audit-warn">{{ bc.unverified_figures|length }} {{ "figure" if bc.unverified_figures|length == 1 else "figures" }} not in the engine's data: {{ bc.unverified_figures|join(", ") }}.</span>
+      {% elif bc.figures_checked %}<span>{{ "The 1 figure matches" if bc.figures_checked == 1 else "All " ~ bc.figures_checked ~ " figures match" }} the engine's data.</span>{% endif %}
+      {% if n.audit_id %}<span>Audit <span class="code">{{ n.audit_id }}</span></span>{% endif %}
+    </p>
+    {% endif %}
     <h3>Top actions</h3>
     <ol class="actions">
       {% for a in n.top_actions %}
@@ -26,6 +34,19 @@
       </li>
       {% endfor %}
     </ol>
+    {% set origins = store.res.kpis.by_origin or {} %}
+    {% if origins %}
+    <h3>Where today's flags started</h3>
+    <table class="records origin-table">
+      <caption class="sr">Flags by the system where the error started, from the rules' accountability records</caption>
+      <thead><tr><th scope="col">Started in</th><th scope="col" class="num">Flags</th><th scope="col" class="num">High</th><th scope="col" class="num">Units</th><th scope="col" class="num">At risk</th></tr></thead>
+      <tbody>
+        {% for name, r in origins.items() %}
+        <tr><th scope="row" class="code">{{ name }}</th><td class="num">{{ r.flags }}</td><td class="num">{{ r.high }}</td><td class="num">{{ r.units|num }}</td><td class="num">{{ r.dollars|money }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
   </div>
   {% endif %}
 </section>

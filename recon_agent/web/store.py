@@ -254,7 +254,8 @@ class Store:
         briefing = self.ai_briefings.get(self._briefing_key(res))
         if briefing:   # a briefing quotes run totals, so it is only reused for the exact same run
             narration.update(shift_briefing=briefing["shift_briefing"], top_actions=briefing["top_actions"],
-                             source=briefing["source"])
+                             source=briefing["source"], audit_id=briefing.get("audit_id"),
+                             briefing_check=briefing.get("briefing_check"))
         engine.apply_narration(res, narration)
         # Flags past the first AI_TOP_FINDINGS keep their rule text, owner and scenario.
         self.ai_ids, self.narration_is_ai = set(by_ai), briefing is not None
@@ -297,7 +298,8 @@ class Store:
                 del self.ai_cache[stale]
             self.ai_briefings[self._briefing_key(res)] = {
                 "shift_briefing": narration["shift_briefing"], "top_actions": narration["top_actions"],
-                "source": narration["source"]}
+                "source": narration["source"], "audit_id": narration.get("audit_id"),
+                "briefing_check": narration.get("briefing_check")}
             for stale in list(self.ai_briefings)[:-20]:
                 del self.ai_briefings[stale]
             if self._apply_ai(self.res):

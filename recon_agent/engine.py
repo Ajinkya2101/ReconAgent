@@ -6,7 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import ai, anomaly, detectors, feedback, ingest, position, sources
+from . import accountability, ai, anomaly, detectors, feedback, ingest, position, sources
 from .detectors import Finding
 from .position import SkuPosition
 
@@ -48,6 +48,8 @@ def compute_kpis(src: ingest.SourceData, positions: dict[str, SkuPosition], find
         "total_demand_units": sum(p.demand_total for p in positions.values()),
         "total_wrapped_units": sum(p.wrapped for p in positions.values()),
         "total_wms_allocated": sum(p.wms_allocated for p in positions.values()),
+        # Where today's flags started and what they do, from each flag's accountability record.
+        **accountability.rollup(findings),
     }
 
 
@@ -59,6 +61,7 @@ def run(data_dir: Path | None = None, use_ai: bool | None = None,
     findings = detectors.run_all(src, positions) + anomaly.detect(src, positions)
     findings = feedback.apply(findings)
     findings.sort(key=lambda f: f.priority, reverse=True)
+    accountability.assign(findings, positions)
     kpis = compute_kpis(src, positions, findings)
 
     if use_ai is False:

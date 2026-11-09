@@ -4,6 +4,12 @@
   {% if answer.source == "ai" %}
   <p class="src">AI answer · {{ config.OCI_MODEL_ID }} on OCI · numbers from the Reconciliation API</p>
   <div class="answer-text">{{ answer.text }}</div>
+  {% set chk = answer.check or {} %}
+  <p class="audit-line">
+    {% if chk.unverified_figures %}<span class="audit-warn">{{ chk.unverified_figures|length }} {{ "figure" if chk.unverified_figures|length == 1 else "figures" }} not in the data the assistant looked up: {{ chk.unverified_figures|join(", ") }}.</span>
+    {% elif chk.figures_checked %}<span>{{ "The 1 figure matches" if chk.figures_checked == 1 else "All " ~ chk.figures_checked ~ " figures match" }} the data it looked up.</span>{% endif %}
+    {% if answer.audit_id %}<span>Audit <span class="code">{{ answer.audit_id }}</span></span>{% endif %}
+  </p>
   {% elif answer.rows %}
   <p class="src">Engine data · {{ "AI unavailable right now" if answer.ai_error else "AI not connected" }}</p>
   {% else %}

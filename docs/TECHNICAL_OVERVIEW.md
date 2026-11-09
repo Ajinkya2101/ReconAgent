@@ -69,9 +69,25 @@ flowchart LR
 3. **Detect**: [detectors.py](../recon_agent/detectors.py) holds the SKU-level rules (R01, R02, R05–R11, R16) and the run/plant-level rules (R03/R04 ghost and blind runs, R12/R13 WMS report checks, R14 batches, R15 key hygiene). [anomaly.py](../recon_agent/anomaly.py) adds R17: a modified z-score on median/MAD (Iglewicz & Hoaglin), with the scale floored at the mean absolute deviation, applied to wrap overrun % and final piece variance.
 4. **Learn** ([feedback.py](../recon_agent/feedback.py)): each rule has a Beta(1,1) prior over planner acceptance. Confidence is the posterior mean normalised so an unseen rule scores 1.0. A rejected finding whose units are unchanged is suppressed on the next run.
 5. **Rank**: `priority = (|units| × unit_price + base_priority) × severity_weight × confidence`, with weights High 3, Medium 2 and Low 1.
-6. **Explain** ([ai.py](../recon_agent/ai.py)): see section 5.
+6. **Attribute** ([accountability.py](../recon_agent/accountability.py)): each finding gets an accountability record built from the same values the rule used (see "System accountability" below). `compute_kpis` totals them as `by_origin` and `by_impact`.
+7. **Explain** ([ai.py](../recon_agent/ai.py)): see section 5.
 
-Each `Finding` carries `rule`, `key`, `sku`, `units`, `unit_price`, `evidence` (a dict of source values), `recommendation` (rule text), `severity`, `confidence`, `systems` and `status`. Its ID is `{rule}-{key}`, which is stable across runs, so decisions survive reloads.
+Each `Finding` carries `rule`, `key`, `sku`, `units`, `unit_price`, `evidence` (a dict of source values), `recommendation` (rule text), `severity`, `confidence`, `systems`, `accountability` and `status`. Its ID is `{rule}-{key}`, which is stable across runs, so decisions survive reloads.
+
+### System accountability
+
+Every flag names the system that misfired, so accountability across MIPS, ODI and WMS is computed, not guessed. One function per rule in `accountability.py` builds the record:
+
+| Field | Values |
+|---|---|
+| `impact` | Over-production, Under-production, Stranded surplus, Short shipment, Overstated inventory, Traceability gap, Financial posting gap, Data integrity |
+| `origin` | MIPS, ODI, WMS, Oracle, Integration (a fault between two systems) or Undetermined |
+| `handoff` | The interface involved, e.g. `WMS → MIPS`, `MIPS → ODI`, `WMS → Oracle` |
+| `failure_type`, `failure_point` | How it misfired (planning logic, stale data, missing transaction ...) and the step, in one sentence |
+| `basis` | `certain` (the data proves it), `likely` (the usual cause; another is possible), `undetermined` |
+| `systems` | MIPS, ODI and WMS always, Oracle when the rule involves it. Each has a role (Misfired, Affected, Reference, Conflicting, To check, Not involved) and a sentence quoting the engine's figures |
+
+Where a rule's direction decides the blame, the record follows it. R09 is under-production when WMS has more on order than MIPS plans, over-production the other way. R10 blames WMS allocation when the stock was made, MIPS when production was planned below the WMS order, and ODI when the plant wrapped short. R05 blames MIPS when the recovery run was sized to the order, ODI when the runs wrapped beyond their order. R18 blames Oracle for a rejected posting and the WMS → Oracle interface for one that never arrived. R11 (units per container) cannot tell which system is wrong, so both are Conflicting and the origin is Undetermined.
 
 ## 3. Tech stack
 
@@ -131,7 +147,7 @@ There is no database in Phase 1. State is held in process memory plus one JSON f
 | Method | Path | Returns |
 |---|---|---|
 | GET | `/api/positions/{sku}` | Reconciled position, ledger and flag IDs |
-| GET | `/api/flags?status=open\|all\|decided` | Flags with evidence, recommendation, explanation, priority |
+| GET | `/api/flags?status=open\|all\|decided` | Flags with evidence, recommendation, explanation, priority, `accountability`, and `ai` (the model's cause chain, checks and audit ID, where the model wrote the text) |
 | POST | `/api/flags/{id}/decision` | Body `{"decision": "accept"\|"reject", "note": "..."}` |
 | GET | `/api/briefing/{shift}` | Briefing, top actions, narration source |
 | POST | `/api/ask` | Body `{"question": "..."}` |
@@ -155,13 +171,21 @@ Every response carries security headers (a Content-Security-Policy without `unsa
 
 [ai.py](../recon_agent/ai.py) talks to OCI Generative AI through `GenerativeAiInferenceClient` with the generic chat API format.
 
-- **`narrate_with_model()`**: one call per run with a strict JSON-schema response format. It returns `shift_briefing`, `top_actions` and per-finding `explanation`, `root_cause` and `owner`. Owner is one of an enum of five roles. Entries with an unknown owner are dropped.
-- **`ask()`**: a tool-using loop of up to 6 turns. The first turn forces a tool call (`ToolChoiceRequired`), because Gemini on OCI rarely calls tools unprompted. The tools read only the current run's data:
+- **`narrate_with_model()`**: one call per run with a strict JSON-schema response format. The prompt carries each finding's evidence and accountability record. It returns `shift_briefing`, `top_actions` and, per finding:
+  - `explanation` (3–5 sentences: what happened, which system misfired and how, the knock-on effect, the correction) and `root_cause`;
+  - `cause_chain`: 2–4 steps in time order, one system each (MIPS, ODI, WMS, Oracle or Integration), starting at the accountability origin;
+  - `impact`, `verify` (the source record that would confirm the attribution), `evidence_used` (evidence keys) and `linked_findings` (other flags with the same cause);
+  - `owner`, one of an enum of five roles. Entries with an unknown owner or ID are dropped.
+
+  The model explains the accountability record; it cannot change it. The UI always shows the rules' record, whatever the model wrote.
+- **Checks** (`check_entry()`): before anything is shown, every figure in the model's text is matched against the numbers in that finding's payload, its linked findings and the KPIs. Rule codes and row keys (R05, ML-0017, SU900210), the trailing parts of dates and times, and counts up to 10 are not treated as figures. Unmatched figures are kept in the text but listed on the flag as unverified ("1 figure not in the engine's data: 1,350. Check before acting."). Unknown evidence keys, unknown linked flags and chain steps naming no known system are removed and counted. `chain_starts_at_origin` is false when the model's account starts in a different system from the rules' origin, and the flag says so. The briefing and the assistant's answers get the same figure check (the assistant against its tool results).
+- **Audit log** (`audit()`): every model call, narration or assistant, successful or not, is appended as one JSON line to `AI_AUDIT_FILE` (`ai_audit.jsonl` next to `feedback.json`, so simulated runs log separately; `RECON_AI_AUDIT_FILE` overrides it). An entry holds the audit ID, the UTC time, the model, the SHA-256 of the prompt, the full request (KPIs and finding payloads) and response, the check results and, for the assistant, the user, every tool call with its result, and the answer. Each explanation, briefing and answer shows its audit ID. When the log cannot be written the text is discarded and the rule text stays: an explanation that was not logged is never shown. A file over 50 MB is renamed with a timestamp, never cut.
+- **`ask()`** / **`ask_audited()`**: a tool-using loop of up to 6 turns. `ask_audited()` also returns the audit ID and the figure check, and records the signed-in user. The first turn forces a tool call (`ToolChoiceRequired`), because Gemini on OCI rarely calls tools unprompted. The tools read only the current run's data:
   - `search_items`: SKUs whose description in any system, or whose number, contains the text
   - `get_sku_position`: full position with MIPS lines, ODI runs, WMS orders and finding IDs
   - `list_findings`: filter by rule, severity or SKU
   - `plant_summary`: count, units and dollars per rule
-- **Fallback**: `offline_narration()` builds the briefing and top actions from KPIs and rule text, and maps each rule to a default owner. With no credentials, the web assistant falls back to keyword/SKU matching over the rows.
+- **Fallback**: `offline_narration()` builds the briefing and top actions from KPIs and rule text (including where the flags started, from `by_origin`), and maps each rule to a default owner. The accountability record does not depend on the model, so it is shown either way. With no credentials, the web assistant falls back to keyword/SKU matching over the rows.
 - **Auth**: the `OCI_USER_OCID`, `OCI_TENANCY_OCID`, `OCI_FINGERPRINT` and `OCI_PRIVATE_KEY` (or `_PATH`) variables are read from `.env`. If they are absent, the client uses the `~/.oci/config` profile. `OCI_COMPARTMENT_ID` is required for AI to be considered available.
 - **Limits**: `OCI_MAX_TOKENS = 32000` (Gemini 2.5 Pro spends part of it on reasoning), with a 300 s read timeout and the SDK default retry strategy.
 
@@ -171,9 +195,10 @@ The system prompt instructs the model to use only supplied or retrieved numbers 
 
 `python -m recon_agent run` writes three files to `output/` ([report.py](../recon_agent/report.py)):
 
-- `recon_<date>.xlsx`: the planner workbook. Its sheets are Briefing, Exceptions (with Decision/Note columns for offline review), SKU Positions, Allocation Proposal, Rule Catalog and Data Lineage.
-- `recon_<date>.html`: a static dashboard.
-- `recon_<date>.json`: KPIs, briefing, top actions and findings, for downstream systems.
+- `recon_<date>.xlsx`: the planner workbook. Its sheets are Briefing, Exceptions (with Decision/Note columns for offline review, and per flag the impact, where it started, the handoff, failure type and point, attribution basis, each system's role, and the AI's cause chain, confirming record, linked flags, figures check and audit ID), Accountability (flags, High flags, units and dollars by origin system), SKU Positions, Allocation Proposal, Rule Catalog and Data Lineage.
+- `recon_<date>.html`: a static dashboard, with where each of the top 30 flags started.
+- `recon_<date>.json`: KPIs (including `by_origin` and `by_impact`), briefing, top actions, the narration's audit ID, and findings with their `accountability` and `narration` records, for downstream systems.
+- `ai_audit.jsonl` (next to `feedback.json`): the AI audit log, one line per model call (section 5).
 
 ## 7. Configuration
 
@@ -185,6 +210,7 @@ Thresholds and UI settings live in [config.py](../recon_agent/config.py). Enviro
 | `RECON_DATA_DIR` | `data/` | Folder holding the five extracts |
 | `RECON_EVENT_DB` | `output/sim/events.db` | Event log (SQLite) for `RECON_SOURCE=events` |
 | `RECON_AI` | `on` | `off` disables every model call, even with credentials (tests, offline demos) |
+| `RECON_AI_AUDIT_FILE` | `ai_audit.jsonl` next to the feedback file | Where every model call is logged |
 | `RECON_SECRET_KEY` | random per process | Signs session cookies; set it on a server, or every restart signs everyone out |
 | `RECON_USERS_FILE` | `output/users.json` | Accounts (username, name, role, password hash) |
 | `RECON_DEMO_PASSWORD` | empty | One password for the demo accounts created on first start; empty means random ones, printed once |

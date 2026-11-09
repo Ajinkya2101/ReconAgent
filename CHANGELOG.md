@@ -7,6 +7,29 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 ## [Unreleased]
 
 ### Added
+- **System accountability on every flag** (`recon_agent/accountability.py`). The rules now say
+  which system misfired, not only that the systems disagree: the impact (over-production,
+  under-production, stranded surplus, short shipment, overstated inventory, traceability gap,
+  financial posting gap, data integrity), the system or interface where it started, the failure
+  type and step, how certain the attribution is, and the role of MIPS, ODI, WMS and (where
+  involved) Oracle: Misfired, Affected, Reference, Conflicting, To check or Not involved. Each role
+  quotes the engine's figures. It is computed from the rule's own values, so it is shown with or
+  without the AI. KPIs total the flags `by_origin` and `by_impact`. The expanded briefing shows
+  "Where today's flags started", and the workbook has an Accountability sheet and per-system
+  columns.
+- **More detailed, auditable AI explanations.** The model gets each flag's accountability record
+  and returns, besides a longer explanation, a cause chain (one system per step, in time order), the
+  impact, the record that would confirm the attribution, the evidence keys it used and linked flags.
+  It cannot change the attribution.
+  - Every figure the model writes is checked against the engine's numbers. Unmatched figures are
+    listed on the flag as unverified. Unknown evidence keys, flag links and systems are removed and
+    counted, and the flag says when the model's account starts somewhere other than the rules'
+    origin. Briefings and assistant answers get the same figure check.
+  - Every model call (narration and the Ask assistant, including failures) is appended to an
+    audit log, `ai_audit.jsonl` next to `feedback.json` (`RECON_AI_AUDIT_FILE`). An entry holds the
+    prompt hash, the full request and response, the checks, and for the assistant the user and its
+    tool calls. Each explanation, briefing and answer shows its audit ID. Text that could not be
+    logged is not shown. `/api/flags` and the JSON report include `accountability` and the AI detail.
 - **Reset simulation** button in the worklist header (event feed only): back to the synthetic
   starting day for the next demo. Clears the event log and re-publishes the seed, and clears the
   simulation's decisions, claims and acknowledgments. Other open screens are told to reload.

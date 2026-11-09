@@ -92,6 +92,11 @@ AI_ENABLED = os.environ.get("RECON_AI", "on").strip().lower() != "off"
 AI_DEBOUNCE_SECONDS = 0 if SOURCE_MODE == "excel" else 20
 AI_MAX_WAIT_SECONDS = 120
 AI_TOP_FINDINGS = 40
+# Every model call (narration and the Ask assistant) is appended here with its input, output and the
+# checks on it; each explanation shows the id of its entry. Kept next to the planner decisions, so
+# simulated runs log separately from real ones. A full file is renamed with a timestamp, never cut.
+AI_AUDIT_FILE = Path(os.environ.get("RECON_AI_AUDIT_FILE", FEEDBACK_FILE.with_name("ai_audit.jsonl")))
+AI_AUDIT_MAX_BYTES = 50 * 1024 * 1024
 OCI_MODEL_ID = os.environ.get("OCI_MODEL_ID") or "google.gemini-2.5-pro"
 OCI_REGION = os.environ.get("OCI_REGION") or "us-chicago-1"
 OCI_COMPARTMENT_ID = os.environ.get("OCI_COMPARTMENT_ID", "")

@@ -11,7 +11,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from . import feedback
+from . import accountability, feedback
 from .detectors import RULES
 from .engine import RunResult
 from .position import propose_allocation
@@ -93,23 +93,50 @@ def write_workbook(res: RunResult, path: Path) -> Path:
     exc_rows = []
     for rank, f in enumerate(res.findings, 1):
         n = by_id.get(f.id, {})
+        a = f.accountability or {}
+        roles = {s["system"]: f"{s['role']}: {s['detail']}" if s["detail"] else s["role"]
+                 for s in a.get("systems", [])}
+        chk = n.get("check") or {}
         exc_rows.append({
             "Rank": rank, "ID": f.id, "Severity": f.severity, "Rule": f.rule, "Exception": f.title,
             "Requirement Scenario": f.scenario, "Challenge Area": f.area, "SKU": f.sku, "Item": f.description,
             "Units": round(f.units), "$ Exposure": round(f.dollars), "Systems": ", ".join(f.systems),
+            "Impact": a.get("impact", ""), "Started In": a.get("origin", ""), "Handoff": a.get("handoff") or "",
+            "Failure Type": a.get("failure_type", ""), "Failure Point": a.get("failure_point", ""),
+            "Attribution": a.get("basis", ""), "MIPS": roles.get("MIPS", ""), "ODI": roles.get("ODI", ""),
+            "WMS": roles.get("WMS", ""), "Oracle": roles.get("Oracle", ""),
             "Recommended Correction": f.recommendation, "Agent Explanation": f.narrative,
-            "Root Cause": n.get("root_cause", ""), "Owner": n.get("owner", ""), "Status": f.status,
+            "Root Cause": n.get("root_cause", ""),
+            "Cause Chain": "\n".join(f"{i}. {s['system']}: {s['step']}"
+                                     for i, s in enumerate(n.get("cause_chain") or [], 1)),
+            "AI Impact": n.get("impact", ""), "Confirm With": n.get("verify", ""),
+            "Linked Flags": ", ".join(n.get("linked_findings") or []),
+            "Figures Check": (f"Unverified: {', '.join(chk['unverified_figures'])}" if chk.get("unverified_figures")
+                              else f"{chk['figures_checked']} figures match" if chk.get("figures_checked") else ""),
+            "AI Audit ID": n.get("audit_id", ""),
+            "Owner": n.get("owner", ""), "Status": f.status,
             "Evidence": f.evidence, "Decision (accept/reject)": "", "Planner Note": ""})
+    long_text = ("Recommended Correction", "Agent Explanation", "Root Cause", "Evidence", "Exception",
+                 "Failure Point", "MIPS", "ODI", "WMS", "Oracle", "Cause Chain", "AI Impact", "Confirm With")
     ws = _sheet(wb, "Exceptions", exc_rows,
                 widths={"ID": 26, "Exception": 30, "Item": 30, "Recommended Correction": 70,
                         "Agent Explanation": 70, "Root Cause": 40, "Evidence": 50, "Planner Note": 30,
-                        "Requirement Scenario": 30, "Challenge Area": 22},
-                wrap=("Recommended Correction", "Agent Explanation", "Root Cause", "Evidence", "Exception"))
+                        "Requirement Scenario": 30, "Challenge Area": 22, "Failure Point": 44,
+                        "MIPS": 40, "ODI": 40, "WMS": 40, "Oracle": 30, "Cause Chain": 60, "AI Impact": 40,
+                        "Confirm With": 40, "Figures Check": 24, "Impact": 20, "Failure Type": 20},
+                wrap=long_text)
     sev_col = list(exc_rows[0]).index("Severity") + 1 if exc_rows else 0
     for row in ws.iter_rows(min_row=2):
         fill = SEV_FILL.get(row[sev_col - 1].value)
         if fill:
             row[sev_col - 1].fill = fill
+
+    acct_rows = [{"Started In": name, "Flags": r["flags"], "High": r["high"], "Units": r["units"],
+                  "$ Exposure": r["dollars"],
+                  "Impacts": ", ".join(sorted({f.accountability.get("impact", "") for f in res.findings
+                                               if accountability.origin_label(f) == name}))}
+                 for name, r in k.get("by_origin", {}).items()]
+    _sheet(wb, "Accountability", acct_rows, widths={"Started In": 30, "Impacts": 60})
 
     ids_by_sku: dict[str, list[str]] = {}
     for f in res.findings:
@@ -161,8 +188,13 @@ def write_json(res: RunResult, path: Path) -> Path:
         "findings": [{"id": f.id, "rule": f.rule, "title": f.title, "severity": f.severity, "sku": f.sku,
                       "item": f.description, "units": f.units, "dollars": round(f.dollars, 2),
                       "priority": round(f.priority, 1), "evidence": f.evidence,
-                      "recommendation": f.recommendation, "explanation": f.narrative, "status": f.status}
+                      "recommendation": f.recommendation, "explanation": f.narrative, "status": f.status,
+                      "accountability": f.accountability,
+                      # Owner, root cause and - when the model wrote it - cause chain, checks and audit id.
+                      "narration": {k: v for k, v in res.narration["by_id"].get(f.id, {}).items()
+                                    if k not in ("id", "explanation")} or None}
                      for f in res.findings],
+        "narration_audit_id": res.narration.get("audit_id"),
     }, indent=2, default=str), encoding="utf-8")
     return path
 
@@ -191,6 +223,8 @@ def write_html(res: RunResult, path: Path) -> Path:
         f"<tr><td class='num'>{i}</td><td><span class='sev {f.severity.lower()}'>{f.severity}</span></td>"
         f"<td><b>{e(f.title)}</b><div class='sub'>{e(f.sku)} {e(f.description)}</div></td>"
         f"<td class='num'>{f.units:,.0f}</td><td class='num'>${f.dollars:,.0f}</td>"
+        f"<td><b>{e(accountability.origin_label(f))}</b><div class='sub'>{e(f.accountability.get('impact', ''))}"
+        f" · {e(f.accountability.get('basis', ''))}</div></td>"
         f"<td>{e(f.narrative)}</td></tr>"
         for i, f in enumerate(res.findings[:30], 1))
     actions = "".join(f"<li>{e(a)}</li>" for a in res.narration["top_actions"])
@@ -234,7 +268,7 @@ padding:8px;border-bottom:1px solid var(--line)}}th{{color:var(--mute);font-weig
 </div>
 <h2>Top 30 exceptions (ranked by $ exposure × severity × learned confidence)</h2>
 <div class="card scroll"><table><thead><tr><th>#</th><th>Severity</th><th>Exception</th>
-<th class="num">Units</th><th class="num">$ exposure</th><th>What to do</th></tr></thead><tbody>{rows}</tbody></table></div>
+<th class="num">Units</th><th class="num">$ exposure</th><th>Started in</th><th>What to do</th></tr></thead><tbody>{rows}</tbody></table></div>
 <h2>Challenge coverage</h2>
 <div class="card scroll"><table><thead><tr><th>Challenge area</th><th>How the agent addresses it</th>
 <th class="num">Findings today</th></tr></thead><tbody>{coverage}</tbody></table></div>
