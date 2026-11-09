@@ -37,6 +37,16 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 - Simulation data documentation (`docs/simulation_data/`) and the application guide PDF.
 
 ### Fixed
+- R09 when MIPS plans more than WMS has on order (found on the demo by raising 900102's
+  supply-plan line ML-0005 from 5,000 to 7,000):
+  - The proposed write-back cut the largest sales-order line, clamped at zero: it would have set
+    customer order ML-0004 from 1,000 to 0 and still left MIPS 1,000 above WMS, while saying MIPS
+    would then match. It now takes the whole excess off the most recently changed line that can
+    absorb it (here ML-0005, 7,000 → 5,000), and proposes nothing when no single line can.
+  - The accountability record printed signed quantities ("-2,000 more") and called a change made in
+    MIPS stale data from WMS. When MIPS demand moved after production was ordered, in the direction
+    of the gap, the record now says Planning change in MIPS. ODI is "To check" rather than
+    "Affected", because its runs were ordered against the earlier demand.
 - The reconciled position stays arithmetically consistent when a source row is edited
   (`tests/test_consistency.py` edits every MIPS line and ODI run of the starting day):
   - A MIPS demand change after production was ordered read as inventory. Inventory is inferred as

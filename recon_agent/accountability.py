@@ -17,6 +17,8 @@ The AI layer explains this record in more detail; it never changes it.
 """
 from __future__ import annotations
 
+import datetime as dt
+
 from .detectors import Finding
 from .position import SkuPosition
 
@@ -160,24 +162,42 @@ def _r08(f, p, ev):
          "WMS": ("To check", f"Confirm the {_n(f.units)} surplus units exist before they are carried forward.")})
 
 
+def _when(value) -> str:
+    try:
+        return f"{dt.datetime.fromisoformat(str(value)):%m/%d %H:%M}"
+    except ValueError:
+        return str(value)
+
+
 def _r09(f, p, ev):
-    mips, wms = ev["mips_demand_sales_date"], ev["wms_order_qty"]
-    synced = f" (MIPS last modified {ev['mips_last_modified']})" if ev.get("mips_last_modified") else ""
-    if f.units > 0:
+    mips, wms, gap = ev["mips_demand_sales_date"], ev["wms_order_qty"], abs(f.units)
+    more = f.units < 0   # MIPS plans more than WMS has on order
+    impact = "Over-production" if more else "Under-production"
+    when = f" (last modified {_when(ev['mips_last_modified'])})" if ev.get("mips_last_modified") else ""
+    # Demand MIPS changed after production was ordered, in the direction of the gap, means MIPS itself
+    # moved (a planning change), not that WMS moved while MIPS was not refreshed.
+    changed = p.demand_after_order if p else 0
+    if changed and (changed > 0) == more:
+        odi = ("To check", f"Production was ordered against {_n(p.demand_at_order)} demand, before MIPS changed by "
+                           f"{changed:+,.0f}; check that no run is resized to MIPS's {_n(mips)}.")
         return _record(
-            f, "Under-production", "MIPS", "Stale data",
-            f"The customer order changed in WMS after MIPS last synced{synced}.", "likely",
-            {"MIPS": ("Misfired", f"Still plans {_n(mips)}; WMS has {_n(wms)} on order."),
-             "WMS": ("Reference", f"Holds the current customer order: {_n(wms)}."),
-             "ODI": ("Affected", f"Production is sized to the MIPS figure, {_n(f.units)} short.")},
-            handoff="WMS → MIPS")
+            f, impact, "MIPS", "Planning change",
+            f"MIPS demand {'rose' if changed > 0 else 'fell'} by {_n(abs(changed))} after production was ordered"
+            f"{when}, with no matching change to the customer orders in WMS.", "likely",
+            {"MIPS": ("Misfired", f"Plans {_n(mips)}, {_n(gap)} {'more' if more else 'less'} than the {_n(wms)} "
+                                  f"on order in WMS."),
+             "WMS": ("Reference", f"Holds the current customer orders: {_n(wms)}."), "ODI": odi})
+    if more:
+        cause = f"MIPS plans more than the customers have on order in WMS; it was not refreshed{when}."
+        odi_detail = f"Production is sized to the MIPS figure: {_n(gap)} more than WMS has on order."
+    else:
+        cause = f"The customer order changed in WMS after MIPS last synced{when}."
+        odi_detail = f"Production is sized to the MIPS figure: {_n(gap)} short of the WMS order."
     return _record(
-        f, "Over-production", "MIPS", "Stale data",
-        f"MIPS plans more than the customer has on order in WMS{synced}.", "likely",
-        {"MIPS": ("Misfired", f"Plans {_n(mips)}, {_n(f.units)} more than the {_n(wms)} on order."),
-         "WMS": ("Reference", f"Holds the current customer order: {_n(wms)}."),
-         "ODI": ("Affected", f"Production is sized to the MIPS figure, {_n(f.units)} too many.")},
-        handoff="WMS → MIPS")
+        f, impact, "MIPS", "Stale data", cause, "likely",
+        {"MIPS": ("Misfired", f"Still plans {_n(mips)}; WMS has {_n(wms)} on order."),
+         "WMS": ("Reference", f"Holds the current customer orders: {_n(wms)}."),
+         "ODI": ("Affected", odi_detail)}, handoff="WMS → MIPS")
 
 
 def _r10(f, p, ev):

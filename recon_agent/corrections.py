@@ -61,9 +61,18 @@ def propose(f: Finding, tables: dict[str, dict[str, dict]], now: dt.datetime) ->
                  if norm_sku(r["FG Oracle Ref"]) == f.sku and not r["Order Moved"]]
         if not lines:
             return None
-        line = max(lines, key=lambda r: (r["Source System"] == "BUSS", r["Order Quantity"] or 0))
+        if f.units >= 0:   # WMS has more on order: the main sales-order line takes the difference
+            line = max(lines, key=lambda r: (r["Source System"] == "BUSS", r["Order Quantity"] or 0))
+        else:
+            # MIPS plans more: take the whole excess off the line changed most recently (usually the one
+            # that caused it), never part of it off a sales order. If no one line can absorb it, a person
+            # decides which lines to cut.
+            able = [r for r in lines if (r["Order Quantity"] or 0) >= -f.units]
+            if not able:
+                return None
+            line = max(able, key=lambda r: (str(r["Last Modify Date Time"] or ""), r["Source System"] != "BUSS"))
         old = line["Order Quantity"] or 0
-        new = max(0, old + f.units)
+        new = old + f.units
         return Proposal(f.id, f.rule, "MIPS", "mips.order_line", "U", line["Order Line ID"],
                         {"Order Quantity": _j(old)}, {"Order Quantity": _j(new)},
                         f"Set MIPS line {line['Order Line ID']} ({line['Source System']}) from {old:,.0f} to "

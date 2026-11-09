@@ -138,6 +138,54 @@ class AttributionTest(unittest.TestCase):
         self.assertIn("Where the flags started: MIPS", self.runs["seed"].narration["shift_briefing"])
 
 
+class PlanningChangeTest(unittest.TestCase):
+    """An operator raises 900102's supply-plan line ML-0005 from 5,000 to 7,000 (reported on the demo)."""
+
+    def setUp(self):
+        import datetime as dt
+        from recon_agent.events.clock import SimClock
+        self.log = seeded_log()
+        clock = SimClock(self.log, cache_seconds=0)
+        clock.advance(dt.timedelta(minutes=1))
+        self.publish = lambda change: self.log.publish(
+            scenarios._resolve(self.log, change, clock.now(), seed.DEFAULT_SALES_DATE), "simulator:test", clock.now())
+        self.publish(scenarios.U("mips.order_line", "ML-0005", Order_Quantity=7000))
+
+    def test_the_raise_is_a_mips_planning_change_not_stale_data(self):
+        f = by_id(result(self.log))["R09-900102"]
+        a = f.accountability
+        self.assertEqual((a["impact"], a["origin"], a["failure_type"], a["handoff"]),
+                         ("Over-production", "MIPS", "Planning change", None))
+        self.assertIn("MIPS demand rose by 2,000 after production was ordered", a["failure_point"])
+        self.assertEqual(roles(f), {"MIPS": "Misfired", "ODI": "To check", "WMS": "Reference"})
+        self.assertIn("Plans 8,000, 2,000 more than the 6,000 on order in WMS.", a["systems"][0]["detail"])
+        for s in a["systems"]:   # quantities are written unsigned ("2,000 more", never "-2,000 more")
+            self.assertNotRegex(s["detail"], r"(?<![\w(])-\d")
+
+    def test_the_correction_takes_the_excess_off_the_line_that_was_raised(self):
+        from recon_agent import sources
+        from recon_agent.web.store import Store
+        store = Store(sources.EventFeed(self.log.path))
+        _, f = store.find("R09-900102")
+        p = store.proposal(f)
+        self.assertEqual((p.key, p.expected, p.changes),
+                         ("ML-0005", {"Order Quantity": 7000}, {"Order Quantity": 5000}))   # not BUSS ML-0004
+        self.publish(scenarios.U("mips.order_line", "ML-0005", Order_Quantity=5000))
+        self.assertNotIn("R09-900102", by_id(result(self.log)))
+
+    def test_no_proposal_when_no_one_line_can_absorb_the_excess(self):
+        from recon_agent import sources
+        from recon_agent.web.store import Store
+        self.publish(scenarios.U("mips.order_line", "ML-0005", Order_Quantity=0))
+        self.publish(scenarios.U("mips.order_line", "ML-0004", Order_Quantity=9000))
+        # MIPS 9,000 vs WMS 6,000 is fine for ML-0004 alone; make the excess larger than any line.
+        self.publish(scenarios.U("mips.order_line", "ML-0005", Order_Quantity=8000))
+        store = Store(sources.EventFeed(self.log.path))
+        _, f = store.find("R09-900102")
+        self.assertEqual(f.units, -11000)
+        self.assertIsNone(store.proposal(f))
+
+
 class FigureCheckTest(unittest.TestCase):
     """An explanation may only quote numbers the engine produced."""
 
