@@ -18,43 +18,7 @@
           hx-get="/queue" hx-target="#queue" hx-push-url="false"
           hx-trigger="change, input changed delay:250ms from:#q, submit">
       <input type="hidden" name="open" value="{{ open_key }}" id="open-key">
-      {% if days|length > 1 %}
-      <fieldset class="days">
-        <legend class="sr">Sales day</legend>
-        <label class="day day--all">
-          <input type="radio" name="day" value="" {% if not day %}checked{% endif %}>
-          <span class="day-face"><span class="day-name">All open days</span></span>
-        </label>
-        {% for d in days %}
-        <label class="day">
-          <input type="radio" name="day" value="{{ d.date.isoformat() }}" {% if day == d.date.isoformat() %}checked{% endif %}>
-          <span class="day-face">
-            {{ tag(d.date, "tag--lg") }}
-            <span class="day-stats">
-              <span class="day-money">{% if d.dollars is not none %}{{ d.dollars|money }}{% else %}{{ d.flags }} flags{% endif %}</span>
-              <span class="day-sub">{% if d.dollars is not none %}retail $ at risk · {% endif %}{{ d.rows }} rows · {{ d.flags }} open flags</span>
-            </span>
-          </span>
-        </label>
-        {% endfor %}
-        <div id="carried-in" class="carried-in">{% include "_carried_in.html" %}</div>
-      </fieldset>
-      {% else %}
-      {# One open sales day: the queue is a single shelf, so the day is its label instead of a
-         filter with one choice, and the rows below don't each repeat the same tag. #}
-      <div class="days days--shelf">
-        {% for d in days %}
-        <div class="shelf">
-          {{ tag(d.date, "tag--lg") }}
-          <span class="day-stats">
-            <span class="day-money">{% if d.dollars is not none %}{{ d.dollars|money }}{% else %}{{ d.flags }} flags{% endif %}</span>
-            <span class="day-sub">{% if d.dollars is not none %}retail $ at risk · {% endif %}{{ d.rows }} rows · {{ d.flags }} open flags</span>
-          </span>
-        </div>
-        {% endfor %}
-        <div id="carried-in" class="carried-in">{% include "_carried_in.html" %}</div>
-      </div>
-      {% endif %}
+      {% include "_days.html" %}
 
       <div class="toolbar">
         <fieldset class="views">

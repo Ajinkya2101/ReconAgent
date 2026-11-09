@@ -1,12 +1,11 @@
 <span id="changes" class="changes" hx-get="/changes?since={{ since }}" hx-trigger="every {{ config.WEB_POLL_SECONDS }}s, recon:changed from:body" hx-swap="outerHTML"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>
-  {%- set ai_ready = "__ai__" in keys %}{% set sim_reset = "__reset__" in keys %}
-  {%- set row_keys = keys|reject("equalto", "__ai__")|reject("equalto", "__reset__")|list %}
+  {%- set sim_reset = "__reset__" in keys %}
   {%- if sim_reset %}
   <a class="changes-pill" href="/">Simulation reset<span class="pill-wide"> to the starting day</span> · Reload</a>
-  {%- elif ai_ready %}
-  <a class="changes-pill" href="">AI explanations ready · Reload</a>
-  {%- elif row_keys %}
-  <button type="button" class="changes-pill" hx-get="/queue" hx-include="#filters" hx-vals='{"since": {{ since }}}' hx-target="#queue">{{ row_keys|length }} {{ "row" if row_keys|length == 1 else "rows" }} changed<span class="pill-wide"> by others</span> · Update</button>
+  {%- elif keys %}
+  {#- Source data, AI text and other people's actions apply at once: app.js sees this marker and redraws
+      the queue, the day totals, the briefing and the open detail from this run (keeping an unsent note). -#}
+  <span hidden data-live-refresh></span>
   {%- endif %}
   <span class="changes-checked">checked <time>{{ checked.strftime("%H:%M:%S") }}</time></span>
 </span>

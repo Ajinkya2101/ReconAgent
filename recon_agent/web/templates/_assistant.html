@@ -8,14 +8,18 @@
     {% if ai_available %}Answers come only from the Reconciliation API: positions, flags and decisions. {{ config.OCI_MODEL_ID }} on OCI Generative AI writes the words; every number is the engine's.
     {% else %}The AI assistant isn't connected here. Name a SKU number or part of an item name and you'll get the engine's data for it.{% endif %}
   </p>
+  {#- Example questions come from the queue as it is now, not from a fixed dataset. -#}
+  {%- set tops = store.ordered_rows()[:2] %}
+  {%- macro question(r) %}Why does {{ r.sku }} have the flag "{{ r.top.title }}"?{% endmacro %}
   <form class="ask" hx-post="/ask" hx-target="#answers" hx-swap="afterbegin" hx-disabled-elt="find button">
     <label for="question" class="sr">Question</label>
-    <textarea id="question" name="question" rows="3" required maxlength="500" placeholder="Why is the 950513 work order bigger than the shortfall?"></textarea>
+    <textarea id="question" name="question" rows="3" required maxlength="500" placeholder="{% if tops %}{{ question(tops[0]) }}{% else %}Which SKUs need a work order?{% endif %}"></textarea>
     <div class="ask-row">
       <span class="ask-try">Try
-        <button type="button" class="link" data-ask="Why is the 950513 work order bigger than the shortfall?">950513</button>
-        <button type="button" class="link" data-ask="Which 76105 orders ship before the wrap?">76105</button>
-        <button type="button" class="link" data-ask="Show me the hot dog buns">hot dog buns</button>
+        {%- for r in tops %}
+        <button type="button" class="link" data-ask="{{ question(r) }}">{{ r.sku }}</button>
+        {%- endfor %}
+        <button type="button" class="link" data-ask="Which SKUs have the most at risk right now?">most at risk</button>
       </span>
       <button class="btn btn--primary btn--sm" type="submit">Ask</button>
     </div>

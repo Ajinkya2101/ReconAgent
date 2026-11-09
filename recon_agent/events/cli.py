@@ -9,6 +9,7 @@
     events delete ENTITY KEY                          delete a row
     events clock [--set T] [--advance 30m] [--rate 60] [--pause | --resume]
     events entities                                   the contract: entities and columns
+    events export [--out DIR]                         the source systems now: Excel, SQLite, Postgres script
     events reset                                      drop every event and the clock
     events scenario list | run S5 [--reset] [--pause 3]   the ten scripted scenarios
     events fault list | add KIND [--source WMS] [--entity E] [--seconds 60] [--batch 3] [--count 1]
@@ -25,7 +26,7 @@ import sys
 from pathlib import Path
 
 from .. import config
-from . import contract, scenarios, seed
+from . import contract, export, scenarios, seed
 from .clock import SimClock, parse_duration
 from .log import FAULT_KINDS, Change, EventLog
 from .projector import Projector
@@ -166,8 +167,11 @@ def run(args) -> None:
 
     elif cmd == "scenario":
         if args.action == "list" or not args.id:
+            previews = scenarios.preview_all(log)   # on the data as it is now
             for sc in scenarios.SCENARIOS.values():
-                print(f"{sc.id}  scenario {sc.number}: {sc.title}\n    {sc.story}\n    raises: {', '.join(sc.appears)}")
+                pv = previews[sc.id]
+                print(f"{sc.id}  scenario {sc.number}: {sc.title}\n    {sc.story}\n    "
+                      f"if run now: {pv['error'] or scenarios.describe(pv)}")
             return
         sc = scenarios.SCENARIOS.get(args.id.upper())
         if not sc:
@@ -175,12 +179,13 @@ def run(args) -> None:
         if args.reset:
             log.reset()
             seed.seed(log)
+        before = scenarios._source_flags(log)
         try:
             scenarios.run(log, sc, pause=args.pause, on_step=lambda i, step, evs: print(
                 f"Step {i + 1}/{len(sc.steps)}: {step.say} ({len(evs)} change(s))"))
         except contract.ContractError as e:
             sys.exit(f"Stopped: {e}")
-        print(f"Done. Watch the worklist for: {', '.join(sc.appears)}")
+        print("Done. " + scenarios.describe(scenarios.flag_diff(before, scenarios._source_flags(log))))
 
     elif cmd == "fault":
         if args.action == "add":
@@ -204,6 +209,14 @@ def run(args) -> None:
         if args.replay_dropped:
             print(f"Replayed {log.redeliver_dropped()} dropped change(s).")
         print(f"Delivered {log.flush() if args.now else log.pump()} change(s).")
+
+    elif cmd == "export":
+        out = Path(args.out)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "Source_Data_Now.xlsx").write_bytes(export.workbook(log))
+        (out / "source_data_now.sqlite").write_bytes(export.sqlite_db(log))
+        (out / "source_data_now_postgres.sql").write_text(export.sql_script(log), encoding="utf-8")
+        print(f"Exported the source systems at source change #{log.source_position()[1]} to {out.resolve()}")
 
     elif cmd == "entities":
         for e in contract.ENTITIES.values():
@@ -249,6 +262,8 @@ def add_parser(sub) -> None:
     g.add_argument("--pause", action="store_true")
     g.add_argument("--resume", action="store_true")
     ev.add_parser("entities", help="The event contract: entities and their columns")
+    s = ev.add_parser("export", help="Export the source systems as they are now (Excel, SQLite, Postgres script)")
+    s.add_argument("--out", default=str(config.OUTPUT_DIR / "export"), help="Folder to write to")
     s = ev.add_parser("scenario", help="List or run the scripted scenarios")
     s.add_argument("action", choices=["list", "run"])
     s.add_argument("id", nargs="?")

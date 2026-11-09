@@ -617,3 +617,6 @@ h1, h2, h3, h4, p { margin: 0; }
   :is(.decide-note, .flag-work, .note-add, .change) > summary, .sources summary { min-height: 44px; }
   .keys-btn { display: none; }
 }
+
+/* The open row left the queue while on screen: its last flag cleared at the source. */
+.detail-gone-note { margin: 16px 0 0; max-width: 60ch; color: var(--ink-2); }

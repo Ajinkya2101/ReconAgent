@@ -128,8 +128,11 @@ def propose(f: Finding, tables: dict[str, dict[str, dict]], now: dt.datetime) ->
         orders = [o for o in tables["buss.sales_order"].values() if norm_sku(o["Item Number"]) == f.sku]
         sales = max((o["Sales Date"] for o in orders if o["Sales Date"]), default=now)
         sales = sales.date() if isinstance(sales, dt.datetime) else sales
+        plant = next((r["Plant Code"] for r in odi if r["Plant Code"]), None) or next(
+            (fc["Plant"] for fc in tables["oracle.forecast"].values()
+             if norm_sku(fc["Item Number"]) == f.sku and fc["Plant"]), "PLANT")
         wo = refs[0] if refs and refs[0] not in tables["mips.work_order"] else _next_key(
-            tables["mips.work_order"], f"WO-UBD-{sales:%Y%m%d}-")
+            tables["mips.work_order"], f"WO-{plant}-{sales:%Y%m%d}-")
         line = next((r for r in odi if r["Prod Line"]), {})
         p_demand = ev["total_demand"] - ev["wms_allocated"]
         row = {"Production Date": _j(sales), "Work Order Number": wo, "FG Oracle Ref": f.sku,

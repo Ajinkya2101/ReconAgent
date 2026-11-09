@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .. import __version__, config, security, sources, users
-from ..events import contract, scenarios, seed
+from ..events import contract, export, scenarios, seed
 from ..events.clock import SimClock, parse_duration
 from ..events.derive import DERIVED, derive
 from ..events.log import FAULT_KINDS, Change, Event, EventLog
@@ -155,7 +155,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     app.mount("/static", StaticFiles(directory=HERE.parent / "web" / "static"), name="static")
     app.mount("/sim-static", StaticFiles(directory=HERE / "static"), name="sim-static")
     templates = Jinja2Templates(directory=HERE / "templates")
-    templates.env.filters.update(show=show)
+    templates.env.filters.update(show=show, num=lambda x: f"{x:,.0f}")
     templates.env.globals.update(SYSTEMS=SYSTEMS, ENTITIES=contract.ENTITIES, DERIVED=DERIVED, RATES=RATES,
                                  config=config, field_value=field_value, describe=describe, contract=contract,
                                  SCENARIOS=scenarios.SCENARIOS, FAULT_KINDS=FAULT_KINDS, FAULT_PRESETS=FAULT_PRESETS,
@@ -405,10 +405,40 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         return render(request, "_poll.html", **c, table_changed=page == "table" and c["head"] != seen)
 
     # --- scenarios ---------------------------------------------------------------
+    previews: dict = {"at": None, "by_id": {}}
+
+    def scenario_previews() -> dict:
+        """What each scenario would do to the data as it is now (recomputed when the source moves)."""
+        at = log.source_position()
+        if previews["at"] != at:
+            previews.update(at=at, by_id=scenarios.preview_all(log))
+        return previews["by_id"]
+
+    # --- export: the source systems as they are now -------------------------------------
+    EXPORTS = {"xlsx": ("Source_Data_Now.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+               "sqlite": ("source_data_now.sqlite", "application/vnd.sqlite3"),
+               "sql": ("source_data_now_postgres.sql", "application/sql; charset=utf-8")}
+
+    @app.get("/export/{kind}")
+    def export_data(request: Request, kind: str):
+        """Built from the current source rows on every download, never a stored copy."""
+        operator(request)
+        if kind not in EXPORTS:
+            raise HTTPException(status_code=404, detail=f"No export '{kind}'")
+        body = {"xlsx": export.workbook, "sqlite": export.sqlite_db,
+                "sql": lambda lg: export.sql_script(lg).encode("utf-8")}[kind](log)
+        name, media = EXPORTS[kind]
+        stamp = f"{clock.now():%Y%m%d-%H%M}"
+        stem, dot, ext = name.rpartition(".")
+        return Response(body, media_type=media,
+                        headers={"Content-Disposition": f'attachment; filename="{stem}-{stamp}.{ext}"',
+                                 "Cache-Control": "no-store"})
+
     @app.get("/scenarios", response_class=HTMLResponse)
     def scenarios_page(request: Request):
         operator(request)
-        return render(request, "scenarios.html", **ctx(request, page="scenarios"))
+        return render(request, "scenarios.html", previews=scenario_previews(), **ctx(request, page="scenarios"))
 
     @app.post("/scenarios/{sid}/run", response_class=HTMLResponse)
     def run_scenario(request: Request, sid: str, reset: str = Form(""), pause: float = Form(3.0)):
@@ -430,11 +460,12 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                     log.reset()
                     seed.seed(log)
                     say("Reset to the starting day.")
+                before = scenarios._source_flags(log)
                 scenarios.run(log, sc, pause=max(0.0, min(pause, 30.0)),
                               on_step=lambda i, step, evs: say(
                                   f"Step {i + 1}/{len(sc.steps)}: {step.say} "
                                   f"({', '.join(published(ev) for ev in evs) if evs else 'no change'})"))
-                say("Done. Watch the worklist for: " + ", ".join(sc.appears))
+                say("Done. " + scenarios.describe(scenarios.flag_diff(before, scenarios._source_flags(log))))
             except Exception as err:   # a scenario needs the starting rows; show why it stopped
                 run_state["error"] = f"{err}. Reset to the starting day and run it again."
             finally:

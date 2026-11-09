@@ -6,7 +6,7 @@
     <div class="pane-head">
       <div>
         <h1 id="sc-h">Scenarios</h1>
-        <p class="pane-note">Ten mismatch scenarios as scripts, each breaking one step of the demand-to-delivery flow for 76108. Each is designed against the starting day: run it there, or tick "Reset first". Steps go through the integration, so active faults apply.</p>
+        <p class="pane-note">{{ SCENARIOS|length }} mismatch scenarios as scripts, each breaking one step of the demand-to-delivery flow. Changes are relative to the rows as they are now, and "If you run it now" is worked out on the current data, so it follows your edits. Tick "Reset first" to start from the starting day. Steps go through the integration, so active faults apply.</p>
       </div>
     </div>
     <ol class="scenarios">
@@ -20,9 +20,18 @@
         <ol class="sc-steps">
           {% for step in sc.steps %}<li>{% if step.advance %}<span class="sc-wait">after {{ step.advance }} of plant time</span> {% endif %}{{ step.say }}</li>{% endfor %}
         </ol>
+        {% set pv = previews[sc.id] %}
         <div class="sc-expect">
-          <span class="stat-k">Watch the worklist for</span>
-          <ul>{% for fid, why in sc.appears.items() %}<li><span class="code">{{ fid }}</span> {{ why }}</li>{% endfor %}</ul>
+          <span class="stat-k">If you run it now</span>
+          {% if pv.error %}<p class="sc-none">It cannot run on the current data: {{ pv.error }}. Tick "Reset first".</p>
+          {% elif not (pv.appears or pv.changes or pv.clears) %}<p class="sc-none">No flag would change.</p>
+          {% else %}
+          <ul>
+            {% for f in pv.appears %}<li><span class="code">{{ f.id }}</span> raised: {{ f.title }}{% if f.units %} · {{ f.units|abs|num }} units{% endif %}</li>{% endfor %}
+            {% for f in pv.changes %}<li><span class="code">{{ f.id }}</span> changes: {{ f.title }}{% if f.units %} · {{ f.units|abs|num }} units{% endif %}</li>{% endfor %}
+            {% for f in pv.clears %}<li><span class="code">{{ f.id }}</span> clears</li>{% endfor %}
+          </ul>
+          {% endif %}
         </div>
         <form class="sc-run" hx-post="/scenarios/{{ sc.id }}/run" hx-target="#run" hx-swap="outerHTML">
           <label class="check"><input type="checkbox" name="reset" value="1"> Reset first</label>

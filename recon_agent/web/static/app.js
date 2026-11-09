@@ -141,6 +141,55 @@
     else if (e.key === "r" && detailOpen) { if (goTo($("[data-reject]", currentFlag() || document.createElement("i")))) e.preventDefault(); }
   });
 
+  // Live data: when /changes reports a change (pushed or polled), one debounced request redraws the queue,
+  // the day totals, the briefing and the open detail from the current run. Never at the cost of what
+  // someone is doing: while a note is being written the detail waits and is redrawn once the note is
+  // sent, cleared or left; an expanded briefing stays open; open disclosures and the scroll survive.
+  let liveTimer = null, kept = null, staleDetail = null;
+  const detailBusy = (d) => (d.contains(document.activeElement) && document.activeElement.matches("input, textarea, select"))
+    || $$("textarea", d).some((t) => t.value.trim());
+  function liveRefresh() {
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(() => {
+      const changesEl = $("#changes"), filters = $("#filters");
+      if (!changesEl || !filters || !window.htmx) return;
+      const since = new URL(changesEl.getAttribute("hx-get"), location.href).searchParams.get("since") || "0";
+      htmx.ajax("GET", "/queue", { source: filters, target: "#queue", values: { since, live: 1 } });
+    }, 150);
+  }
+  document.body.addEventListener("htmx:afterSettle", () => { if ($("#changes [data-live-refresh]")) liveRefresh(); });
+  document.body.addEventListener("htmx:oobBeforeSwap", (e) => {
+    const target = e.detail.target;
+    if (target?.id === "detail") {
+      const key = $(".detail", target)?.dataset.key;
+      if (detailBusy(target)) { e.detail.shouldSwap = false; staleDetail = key; return; }
+      staleDetail = null;
+      kept = { key, open: $$("details", target).map((d) => d.open), scroll: target.scrollTop };
+    } else if (target?.id === "briefing" && target.classList.contains("is-expanded")) {
+      e.detail.shouldSwap = false;
+    }
+  });
+  document.body.addEventListener("htmx:oobAfterSwap", (e) => {
+    const target = e.detail.target;
+    if (target?.id !== "detail" || !kept) return;
+    const was = kept;
+    kept = null;
+    if ($(".detail", target)?.dataset.key !== was.key) return;
+    const now = $$("details", target);
+    if (now.length === was.open.length) now.forEach((d, i) => { d.open = was.open[i]; });
+    target.scrollTop = was.scroll;
+  });
+  // A detail held back for a note catches up as soon as the note no longer needs protecting.
+  const catchUp = () => setTimeout(() => {
+    const d = $("#detail");
+    if (!staleDetail || !d || detailBusy(d) || $(".detail", d)?.dataset.key !== staleDetail) return;
+    const key = staleDetail;
+    staleDetail = null;
+    htmx.ajax("GET", "/row/" + encodeURIComponent(key), { target: "#detail" });
+  }, 0);
+  document.addEventListener("focusout", catchUp);
+  document.addEventListener("input", catchUp);
+
   // Server push: hear about changes the moment the feed moves. The poll on #changes stays as a fallback.
   const changes = $("#changes");
   if (changes && "EventSource" in window) {

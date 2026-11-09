@@ -193,6 +193,7 @@ h1, h2, p { margin: 0; }
 .sc-expect { display: grid; gap: 4px; font-size: var(--t-sm); }
 .sc-expect .stat-k { color: var(--ink-3); }
 .sc-expect ul { margin: 0; padding-left: 20px; }
+.sc-none { margin: 0; color: var(--ink-2); }
 .sc-run { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .sc-run .check { margin: 0; }
 .sc-pause { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-sm); }

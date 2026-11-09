@@ -25,11 +25,22 @@ ACCEPTED = "Accepted - awaiting correction"
 REJECTED = "Rejected"
 AI_READY = "__ai__"   # change key: the AI text for this run has arrived
 SIM_RESET = "__reset__"   # change key: someone reset the simulation to the starting day
+DATA_CHANGED = "__data__"   # change key: run totals moved (day tiles, briefing), whichever rows changed
+FEED = ("engine", "feed", "ai")   # who a change is "by" when it came from the data or the model, not a person
 SEVERITY_RANK = {"High": 3, "Medium": 2, "Low": 1}
 
 
 def slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "-", text).strip("-")
+
+
+def fingerprint(row: "Row") -> str:
+    """Everything the worklist shows for a row that comes from the data: each flag's figures, evidence,
+    explanation and accountability, and every source record behind the reconciled position. Any edit
+    in any source system that touches the row changes it, so open screens are told."""
+    flags = [(f.id, round(f.units, 2), f.severity, f.status, f.evidence, f.recommendation, f.narrative,
+              f.accountability) for f in row.flags]
+    return json.dumps([flags, repr(row.position)], sort_keys=True, default=str)
 
 
 def next_sales_day(d: dt.date) -> dt.date:
@@ -103,13 +114,15 @@ class Store:
     rows: dict[str, Row] = field(default_factory=dict)
     narration_state: str = "rules"   # rules | pending | ai | failed
     narration_error: str = ""
-    # Model text per flag, keyed by (id, units, evidence): a flag whose numbers are unchanged keeps
+    # Model text per flag, keyed by its figures, rule text and attribution: an unchanged flag keeps
     # its explanation across reloads. A None value means the model was asked and returned nothing.
     ai_cache: dict[tuple, dict | None] = field(default_factory=dict)
     ai_briefings: dict[tuple, dict] = field(default_factory=dict)   # run (flag keys + KPIs) -> model briefing
     _ai_timer: threading.Timer | None = None
     _ai_running: bool = False
     _ai_first_change: float | None = None
+    _loaded: bool = False
+    _kpi_print: str = ""
 
     def __post_init__(self):
         # Write-back needs source row keys, which only the event feed has. Corrections belong to
@@ -123,9 +136,9 @@ class Store:
 
     # --- loading ---------------------------------------------------------
     def load(self) -> set[str]:
-        """(Re)run the engine. Returns the row keys whose flags changed."""
+        """(Re)run the engine. Returns the row keys whose figures, flags or explanations changed."""
         with self.lock:
-            before = {k: {(f.id, round(f.units, 2)) for f in r.flags} for k, r in self.rows.items()}
+            before = {k: fingerprint(r) for k, r in self.rows.items()}
             # Taken first: anything published during the run triggers one more reload, never none.
             self.position = self.feed.position()
             # Rule text first, so the worklist opens at once; the AI text follows in the background.
@@ -160,11 +173,15 @@ class Store:
                                 flags=sorted(flags, key=lambda f: f.priority, reverse=True),
                                 position=p, claim=self.claims.get(key))
             self.rows = rows
-            after = {k: {(f.id, round(f.units, 2)) for f in r.flags} for k, r in rows.items()}
+            after = {k: fingerprint(r) for k, r in rows.items()}
             changed = {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)}
-            if before:
+            kpi_print = json.dumps(self.res.kpis, sort_keys=True, default=str)
+            if self._loaded:   # the first load has no screens to tell
                 for k in changed:
                     self._bump(k, "engine")
+                if changed or kpi_print != self._kpi_print:
+                    self._bump(DATA_CHANGED, "engine")
+            self._loaded, self._kpi_print = True, kpi_print
             self._confirm_corrections()
             self.feed.commit()
             return changed
@@ -241,7 +258,9 @@ class Store:
     # quiet for AI_DEBOUNCE_SECONDS (at most AI_MAX_WAIT_SECONDS after the first change).
     @staticmethod
     def _ai_key(f: Finding) -> tuple:
-        return f.id, round(f.units, 2), json.dumps(f.evidence, sort_keys=True, default=str)
+        # Everything the explanation rests on: a change to any figure, sentence or attribution asks again.
+        return (f.id, round(f.units, 2), json.dumps(f.evidence, sort_keys=True, default=str), f.recommendation,
+                json.dumps(f.accountability, sort_keys=True, default=str))
 
     def _briefing_key(self, res) -> tuple:
         return (tuple(self._ai_key(f) for f in res.findings[:config.AI_TOP_FINDINGS]),
@@ -433,6 +452,10 @@ class Store:
 
     def changes_since(self, version: int, user: str) -> set[str]:
         return {c.key for c in self.changes if c.version > version and c.by != user}
+
+    def feed_changes_since(self, version: int) -> set[str]:
+        """Keys changed by the source data (not by a person) since `version`: these apply live."""
+        return {c.key for c in self.changes if c.version > version and c.by in FEED}
 
     # --- actions ---------------------------------------------------------
     def _bump(self, key: str, by: str) -> None:

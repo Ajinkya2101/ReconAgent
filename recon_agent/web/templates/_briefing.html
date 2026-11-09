@@ -2,7 +2,7 @@
 {% set first = n.shift_briefing.split(". ")[0] %}
 {% set briefing_id = store.res.kpis.sales_date ~ "-" ~ store.loaded_at.strftime('%H%M') %}
 {% set is_read = store.briefing_read.get(user.name) == briefing_id %}
-<section class="briefing{% if expanded %} is-expanded{% endif %}{% if is_read %} is-read{% endif %}" id="briefing" data-briefing-id="{{ briefing_id }}" aria-labelledby="briefing-h">
+<section class="briefing{% if expanded %} is-expanded{% endif %}{% if is_read %} is-read{% endif %}" id="briefing" data-briefing-id="{{ briefing_id }}" aria-labelledby="briefing-h"{% if briefing_oob %} hx-swap-oob="outerHTML"{% endif %}>
   <div class="briefing-line">
     <h2 id="briefing-h">Shift briefing</h2>
     <span class="src">{% if store.narration_is_ai %}AI briefing · {{ config.OCI_MODEL_ID }}{% elif store.narration_state == "pending" %}From the rules · AI text on the way{% elif store.narration_state == "failed" %}From the rules · AI unavailable{% else %}From the rules{% endif %} · {{ store.loaded_at|hm }}</span>

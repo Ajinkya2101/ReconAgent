@@ -100,12 +100,12 @@ class SkuPosition:
 
     @property
     def odi_wo_qty(self) -> dict[str, float]:
-        """Work-order quantity ODI carries per work order (the first row that names it)."""
-        out: dict[str, float] = {}
+        """Work-order quantity ODI carries per work order: the value most of its rows carry."""
+        by_wo: dict[str, list[float]] = defaultdict(list)
         for e in self.odi:
             if e.wo:
-                out.setdefault(e.wo, e.wo_qty)
-        return out
+                by_wo[e.wo].append(e.wo_qty)
+        return {wo: Counter(qtys).most_common(1)[0][0] for wo, qtys in by_wo.items()}
 
     @property
     def odi_demand_left(self) -> float:

@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .. import __version__, ai, config, security, sources, users
-from .store import ACCEPTED, REJECTED, Row, Store, day_tag, ledger, next_sales_day
+from .store import ACCEPTED, AI_READY, REJECTED, Row, Store, day_tag, ledger, next_sales_day
 
 HERE = Path(__file__).parent
 SESSION_COOKIE = "recon_session"
@@ -215,7 +215,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         return render(request, "worklist.html", **page_context(request, user, row, False))
 
     @app.get("/queue", response_class=HTMLResponse)
-    def queue(request: Request, open: str = "", since: int = -1):
+    def queue(request: Request, open: str = "", since: int = -1, live: int = 0):
+        """The queue. With live=1 (a change in the data reached this screen) it also redraws the day
+        totals, the briefing and the open detail from the current run, so no figure stays stale."""
         user = require_user(request)
         if not is_htmx(request):
             return RedirectResponse("/?" + str(request.query_params), status_code=303)
@@ -223,7 +225,11 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         ctx = page_context(request, user, None, False)
         ctx["open_key"] = open if open in store.rows else ""
         changed = store.changes_since(since, user["name"]) if since >= 0 else set()
-        ctx["detail_row"] = store.rows[open] if open in changed and open in store.rows else None
+        redraw = open in changed or (live and AI_READY in changed)
+        ctx["detail_row"] = store.rows[open] if redraw and open in store.rows else None
+        ctx["detail_gone"] = open if live and open in changed and open not in store.rows else ""
+        ctx["gone_position"] = store.res.positions.get(open) if ctx["detail_gone"] else None
+        ctx["live"] = bool(live)
         return render(request, "_queue_response.html", **ctx)
 
     @app.get("/changes", response_class=HTMLResponse)

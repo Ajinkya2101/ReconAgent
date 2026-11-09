@@ -28,6 +28,12 @@
     <a class="tab{% if page == 'scenarios' %} is-current{% endif %}" href="/scenarios"{% if page == 'scenarios' %} aria-current="page"{% endif %}>Scenarios</a>
     <a class="tab{% if page == 'integration' %} is-current{% endif %}" href="/integration"{% if page == 'integration' %} aria-current="page"{% endif %}>Integration{% if status.faults %} <b class="tab-alert">{{ status.faults }} fault{{ "s" if status.faults != 1 }}</b>{% endif %}</a>
   </div>
+  <div class="tab-group tab-group--tools">
+    <span class="tab-system">EXPORT NOW</span>
+    <a class="tab" href="/export/xlsx" download title="Every source table as it is now, the reconciled position and the flags">Excel</a>
+    <a class="tab" href="/export/sqlite" download title="A SQLite database of the current rows, with the v_sku_position view (open it in DBeaver)">SQLite</a>
+    <a class="tab" href="/export/sql" download title="A PostgreSQL script that loads the current rows into schema recon">Postgres</a>
+  </div>
   <form class="tabs-reset" hx-post="/reset" hx-confirm="Reset to the starting day? This clears every change, fault and delivery, including other operators' work, and re-publishes the synthetic seed.">
     <button class="btn btn--sm btn--quiet" type="submit">Reset to starting day</button>
   </form>

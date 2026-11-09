@@ -1,25 +1,31 @@
 """Known mismatch scenarios as scripts of source-system changes.
 
-Each scenario plays a short story against the starting day (seed.py) on SKU 76108, the
-workbook's own example, which starts clean: the flag visibly appears on the worklist
-when it runs. Every scenario breaks one step of the demand-to-delivery flow
+Each scenario plays a short story on SKU 76108, the workbook's own example, which starts
+clean: every scenario breaks one step of the demand-to-delivery flow
 (docs/DATA_MODEL_9NOV.md). Steps publish through the normal producer path, so injected
-faults apply to them. `appears` lists the flags the scenario must raise (or clear) when
-run on the untouched starting day; tests/test_scenarios.py checks every one, so the
-library doubles as the regression suite for the rules.
+faults apply to them.
 
-Work-order numbers carry the sales date: "{date}" in a key or value is the starting
-day's date (YYYYMMDD). Run one with `events scenario run S5`, or from the simulator's
-Scenarios tab.
+Nothing here is a result. A change is relative to what the row holds when the step runs
+(`add(600)` raises a quantity by 600), and what a scenario will raise is worked out live by
+`preview`, which plays it on a scratch copy of the log and runs the engine on both sides.
+`appears` and `clears` are only the flags expected on the untouched starting day: the
+regression oracle that tests/test_scenarios.py checks.
+
+Work-order numbers carry the sales date: "{date}" in a key or value is the starting day's
+date (YYYYMMDD). Run one with `events scenario run S5`, or from the simulator's Scenarios tab.
 """
 from __future__ import annotations
 
 import datetime as dt
+import sqlite3
+import tempfile
 import time
+from contextlib import closing
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
-from . import contract, seed
+from . import contract
 from .clock import SimClock, parse_duration
 from .derive import derive
 from .log import Change, Event, EventLog
@@ -40,8 +46,8 @@ class Scenario:
     story: str
     skus: tuple[str, ...]
     steps: list[Step]
-    appears: dict[str, str]                          # flag ID -> why it appears
-    clears: dict[str, str] = field(default_factory=dict)
+    appears: tuple[str, ...]                         # flag IDs raised on the untouched starting day (tests)
+    clears: tuple[str, ...] = ()
 
 
 def U(entity: str, key: str, note: str | None = None, **cols) -> Change:
@@ -56,26 +62,27 @@ def D(entity: str, key: str, note: str | None = None) -> Change:
     return Change(entity, "D", key, note=note)
 
 
+def add(n: float) -> Callable:
+    """A quantity change relative to what the row holds when the step runs."""
+    return lambda current: (current or 0) + n
+
+
 WO1 = "WO-UBD-{date}-001"                            # 76108's work order
-_WO1 = seed.wo_number(seed.DEFAULT_SALES_DATE, 1)
 ODI_76108 = [f"ODI-{n:04d}" for n in range(1, 13)]   # FC001 first, then the 11 orders in workbook order
 ODI_ON_WO = [k for k in ODI_76108 if k != "ODI-0003"]  # Bay Shore (ODI-0003) is served from allocated stock
 
 SCENARIOS: dict[str, Scenario] = {s.id: s for s in (
     Scenario(
         "S1", 1, "A customer raises a BUSS order; ODI is not refreshed",
-        "ALBANY NY BAKERY raises its 76108 order 2263245 from 7,200 to 7,800 in BUSS. The ODI mapping keeps 7,200, "
-        "so MIPS plans its demand and the work order 600 short.",
+        "ALBANY NY BAKERY raises its 76108 order 2263245 by 600 units in BUSS. The ODI mapping is not refreshed.",
         ("76108",),
-        [Step("BUSS takes the bigger order.",
-              [U("buss.sales_order", "2263245-1", Order_Quantity=7800, note="Albany raised its order")])],
-        {"R02-2263245-1": "BUSS has 7,800; ODI still maps 7,200",
-         "R04-76108": "MIPS plans 55,635; the sources leave 56,235",
-         "R05-76108": "the work order is 600 short of the 49,235 shortfall"}),
+        [Step("BUSS takes the bigger order (+600).",
+              [U("buss.sales_order", "2263245-1", Order_Quantity=add(600), note="Albany raised its order")])],
+        ("R02-2263245-1", "R04-76108", "R05-76108")),
     Scenario(
         "S2", 2, "A new BUSS order line never reaches ODI",
-        "BBU_LANCASTER NY CMB places a second 76108 order (2263260, 900 units). The BUSS to ODI interface drops it, "
-        "so neither ODI nor MIPS knows the demand exists.",
+        "BBU_LANCASTER NY CMB places a new 900-unit 76108 order (2263260) in BUSS. The BUSS to ODI interface "
+        "drops it.",
         ("76108",),
         [Step("BUSS records the new order; nothing arrives in ODI.",
               [I("buss.sales_order", {
@@ -84,77 +91,65 @@ SCENARIOS: dict[str, Scenario] = {s.id: s for s in (
                   "Ship-To Location (USA)": "Lancaster, NY, USA", "FG BUSS Code": "2771", "Item Number": "76108",
                   "Item Description": "BP WHITE HOT DOG BUNS 8P 14Z", "UOM": "Units", "Order Quantity": 900,
                   "Requested Ship Date": "sales", "Sales Date": "sales"})])],
-        {"R01-2263260-1": "the 900-unit order is in BUSS but not in the ODI mapping",
-         "R04-76108": "MIPS plans 55,635; the sources leave 56,535",
-         "R05-76108": "the work order is 900 short"}),
+        ("R01-2263260-1", "R04-76108", "R05-76108")),
     Scenario(
         "S3", 3, "A customer cancels in BUSS; ODI keeps the line",
-        "WILMINGTON MA cancels its 352-unit 76108 order in BUSS. The ODI mapping keeps the line, so MIPS still plans "
-        "for it: 352 units of over-production.",
+        "WILMINGTON MA cancels its 76108 order 2263256 in BUSS. The ODI mapping keeps the line.",
         ("76108",),
         [Step("BUSS deletes the order line.", [D("buss.sales_order", "2263256-1", note="order cancelled")])],
-        {"R03-ODI-0012": "ODI still maps the cancelled Wilmington order",
-         "R04-76108": "MIPS plans 352 more than the sources leave",
-         "R05-76108": "the work order makes 352 too many"}),
+        ("R03-ODI-0012", "R04-76108", "R05-76108")),
     Scenario(
         "S4", 4, "WMS allocates more stock; ODI and MIPS keep the old allocation",
-        "WMS reserves 660 more 76108 for BBU_MASPETH NY PAGE from available stock (allocated 473 to 1,133, "
-        "available 7,000 to 6,340). The shortfall is unchanged, but ODI and MIPS still carry the old allocation.",
+        "WMS reserves 660 more 76108 for an order, moving them from available to allocated. ODI and MIPS keep "
+        "the allocation they had.",
         ("76108",),
         [Step("WMS moves 660 units from available to allocated.",
-              [U("wms.inventory", "INV-0001", Available_quantity=6340, Allocated_quantity=1133)])],
-        {"R09-76108": "WMS has 1,133 allocated; ODI shows 473",
-         "R04-76108": "MIPS plans 55,635; demand less the new allocation is 54,975"}),
+              [U("wms.inventory", "INV-0001", Available_quantity=add(-660), Allocated_quantity=add(660))])],
+        ("R09-76108", "R04-76108")),
     Scenario(
         "S5", 5, "MIPS re-plans the work order; ODI keeps the old quantity",
-        "A planner raises work order " + _WO1 + " in MIPS from 48,635 to 50,000 for safety. The shortfall is still "
-        "48,635, and ODI keeps mapping the old quantity.",
+        "A planner raises 76108's work order by 1,365 units in MIPS for safety. ODI keeps mapping the old quantity.",
         ("76108",),
-        [Step("MIPS saves the bigger work order.",
-              [U("mips.work_order", WO1, Work_Order_Quantity=50000, note="planner override")])],
-        {"R05-76108": "the work order makes 1,365 more than the shortfall",
-         f"R07-{_WO1}": "ODI still carries 48,635 for the work order"}),
+        [Step("MIPS saves the bigger work order (+1,365).",
+              [U("mips.work_order", WO1, Work_Order_Quantity=add(1365), note="planner override")])],
+        ("R05-76108", "R07-WO-UBD-20260912-001")),
     Scenario(
         "S6", 6, "A WMS cycle count changes on hand only",
-        "A cycle count at FG.1.1.1 finds 100 fewer 76108 buns. WMS books the count against on hand but leaves "
-        "available and allocated as they were, so WMS offers stock it does not have.",
+        "A cycle count at 76108's locator books 100 fewer buns against on hand only. Available and allocated stay "
+        "as they were.",
         ("76108",),
-        [Step("WMS books the count: on hand 7,473 to 7,373.", [U("wms.inventory", "INV-0001", On_hand=7373)])],
-        {"R10-INV-0001": "on hand 7,373 but available 7,000 + allocated 473 = 7,473"}),
+        [Step("WMS books the count against on hand (-100).", [U("wms.inventory", "INV-0001", On_hand=add(-100))])],
+        ("R10-INV-0001",)),
     Scenario(
         "S7", 7, "The line runs late: wrapping ends after the ship dates",
-        "Line 1 goes down and work order " + _WO1 + " wraps on the evening before the sales day, after the "
-        "requested ship dates of six orders. Finished goods reach WMS too late for them.",
+        "Line 1 goes down and 76108's work order wraps now, in plant time, after the requested ship date of "
+        "orders that ship earlier.",
         ("76108",),
         [Step("ODI records the late wrap on every row of the work order.",
               [U("odi.batch_mapping", k, Wrapping_Start_Date_Time="now", Wrapping_End_Date_Time="now")
                for k in ODI_ON_WO])],
-        {f"R12-{_WO1}": "wrapping ended after the requested ship date of six orders (4,664 units)"}),
+        ("R12-WO-UBD-20260912-001",)),
     Scenario(
         "S8", 8, "The work order is deleted in MIPS",
-        "Work order " + _WO1 + " is deleted in MIPS by mistake. The shortfall of 48,635 has no work order, and ODI "
-        "still maps the demand to the deleted one.",
+        "76108's work order is deleted in MIPS by mistake. ODI still maps the demand to it.",
         ("76108",),
         [Step("MIPS deletes the work order.", [D("mips.work_order", WO1, note="deleted by mistake")])],
-        {"R06-76108": "48,635 short with no work order",
-         f"R07-{_WO1}": "ODI maps 11 demand lines to a work order MIPS no longer has"}),
+        ("R06-76108", "R07-WO-UBD-20260912-001")),
     Scenario(
         "S9", 9, "ODI loses the work-order link on a demand line",
-        "An ODI reload drops the work order from ALBANY NY BAKERY's 7,200-unit order. The line has no allocated "
-        "stock either, so nothing produces it.",
+        "An ODI reload drops the work order from ALBANY NY BAKERY's line. The line has no allocated stock either.",
         ("76108",),
         [Step("ODI rewrites the Albany row without its work order.",
               [U("odi.batch_mapping", "ODI-0002", Work_Order_Number=None, Work_Order_Date=None,
                  Work_Order_Quantity=None)])],
-        {"R08-ODI-0002": "7,200 units neither allocated nor on a work order"}),
+        ("R08-ODI-0002",)),
     Scenario(
         "S10", 10, "An order arrives with a mistyped BUSS item code",
-        "CHICOPEE MA's 76108 order comes from BUSS with FG BUSS Code 2717 instead of 2771. Joins on the BUSS code "
-        "between BUSS and MIPS fail for this order.",
+        "CHICOPEE MA's 76108 order arrives from BUSS with a mistyped FG BUSS Code (2717).",
         ("76108",),
         [Step("BUSS sends the order with the wrong code.",
               [U("buss.sales_order", "2263257-1", FG_BUSS_Code="2717")])],
-        {"R13-76108": "BUSS orders use codes 2717 and 2771; MIPS uses 2771"}),
+        ("R13-76108",)),
 )}
 
 
@@ -180,6 +175,7 @@ def _resolve(log: EventLog, change: Change, now: dt.datetime, sales_date: dt.dat
     if current is None:
         raise contract.ContractError(f"{e.name} {key} does not exist; reset to the starting day first")
     if change.op == "U":
+        row = {col: v(current.get(col)) if callable(v) else v for col, v in row.items()}   # relative changes
         typed = derive(e.name, contract.validate(e, {**current, **contract.encode(row)}), now=now)
         merged = contract.encode(typed)
         return Change(e.name, "U", key, {c: v for c, v in merged.items() if v != current.get(c)}, note=change.note)
@@ -223,3 +219,58 @@ def run(log: EventLog, scenario: Scenario, pause: float = 0.0,
         if on_step:
             on_step(i, step, events)
     return published
+
+
+# --- live preview ---------------------------------------------------------------------------------
+
+def _source_flags(log: EventLog) -> dict:
+    from .. import engine
+    from .projector import Projector
+    p = Projector(log, stream="source")
+    p.catch_up()
+    return {f.id: f for f in engine.run(src=p.source_data(), use_ai=False).findings}
+
+
+def flag_diff(before: dict, after: dict) -> dict:
+    """What changed between two runs: flags raised, cleared, and still open with new figures."""
+    return {"appears": [after[k] for k in after if k not in before],
+            "clears": [before[k] for k in before if k not in after],
+            "changes": [after[k] for k in after if k in before and
+                        (round(after[k].units, 2), after[k].recommendation) !=
+                        (round(before[k].units, 2), before[k].recommendation)]}
+
+
+def preview(log: EventLog, scenario: Scenario, before: dict | None = None) -> dict:
+    """What `scenario` would raise and clear if it ran now: it plays on a scratch copy of the log, so
+    the answer follows the current source data, whatever the operator has changed. `before` is the
+    current run's flags, when the caller already has them."""
+    import shutil
+    folder = Path(tempfile.mkdtemp(prefix="recon-preview-"))
+    try:
+        with closing(sqlite3.connect(log.path)) as src, closing(sqlite3.connect(folder / "events.db")) as dst:
+            src.backup(dst)
+        copy = EventLog(folder / "events.db")
+        before = _source_flags(log) if before is None else before
+        try:
+            run(copy, scenario)
+        except (contract.ContractError, KeyError, ValueError) as err:
+            return {"appears": [], "clears": [], "changes": [], "error": str(err)}
+        return {**flag_diff(before, _source_flags(copy)), "error": ""}
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def describe(diff: dict) -> str:
+    """One line for the operator: what the worklist will show, from a flag_diff."""
+    def fmt(fs):
+        return ", ".join(f"{f.id} ({abs(f.units):,.0f} units)" if f.units else f.id for f in fs)
+    parts = [f"Raised: {fmt(diff['appears'])}" if diff["appears"] else "",
+             f"changed: {fmt(diff['changes'])}" if diff["changes"] else "",
+             f"cleared: {fmt(diff['clears'])}" if diff["clears"] else ""]
+    text = "; ".join(p for p in parts if p)
+    return (text[0].upper() + text[1:] + ".") if text else "No flag changed."
+
+
+def preview_all(log: EventLog) -> dict[str, dict]:
+    before = _source_flags(log)
+    return {sid: preview(log, sc, before) for sid, sc in SCENARIOS.items()}

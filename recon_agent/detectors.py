@@ -10,6 +10,7 @@ the AI layer explains and prioritises them.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 
 from . import config
@@ -234,13 +235,21 @@ def r06_missing_work_order(p: SkuPosition) -> list[Finding]:
 # 5. The work order reaches ODI, and every demand line is allocated or produced
 # --------------------------------------------------------------------------
 
+def _most_common(values):
+    return Counter(values).most_common(1)[0][0]
+
+
 def r07_odi_work_order(p: SkuPosition) -> list[Finding]:
     out = []
     mips = {w.wo: w for w in p.work_orders}
-    for wo, odi_qty in p.odi_wo_qty.items():
-        rows = [e.entry_id for e in p.odi if e.wo == wo]
+    by_wo: dict[str, list] = {}
+    for e in p.odi:
+        if e.wo:
+            by_wo.setdefault(e.wo, []).append(e)
+    for wo, rows in by_wo.items():
         w = mips.get(wo)
         if w is None:
+            odi_qty = _most_common(e.wo_qty for e in rows)
             out.append(Finding(
                 "R07", wo, p.sku, p.description, odi_qty, p.unit_price,
                 evidence={"odi_work_order": wo, "odi_work_order_qty": odi_qty, "odi_rows": len(rows),
@@ -251,19 +260,24 @@ def r07_odi_work_order(p: SkuPosition) -> list[Finding]:
                     f"MIPS: re-link the ODI rows to the MIPS work order, or restore it in MIPS."),
                 severity="Medium", systems=["MIPS", "ODI"]))
             continue
-        stale = [e.entry_id for e in p.odi if e.wo == wo and _differs(e.wo_qty, w.wo_qty)]
-        if stale:
-            diff = w.wo_qty - odi_qty
-            out.append(Finding(
-                "R07", wo, p.sku, p.description, diff, p.unit_price,
-                evidence={"work_order": wo, "mips_work_order_qty": w.wo_qty, "odi_work_order_qty": odi_qty,
-                          "odi_rows_stale": len(stale)},
-                recommendation=(
-                    f"MIPS has work order {wo} at {_fmt(w.wo_qty)}, but {len(stale)} ODI "
-                    f"{'row still carries' if len(stale) == 1 else 'rows still carry'} {_fmt(odi_qty)} "
-                    f"({diff:+,.0f}). Re-send the work order from MIPS to ODI so batches are mixed for the "
-                    f"current quantity."),
-                systems=["MIPS", "ODI"]))
+        stale = [e for e in rows if _differs(e.wo_qty, w.wo_qty)]
+        if not stale:
+            continue
+        odi_qty = _most_common(e.wo_qty for e in stale)   # what the stale rows carry
+        values = sorted({e.wo_qty for e in stale})
+        diff = w.wo_qty - odi_qty
+        carried = " or ".join(_fmt(v) for v in values)
+        out.append(Finding(
+            "R07", wo, p.sku, p.description, diff, p.unit_price,
+            evidence={"work_order": wo, "mips_work_order_qty": w.wo_qty, "odi_work_order_qty": odi_qty,
+                      "odi_rows_stale": len(stale), "odi_rows_on_work_order": len(rows),
+                      "stale_rows": ", ".join(e.entry_id for e in stale)},
+            recommendation=(
+                f"MIPS has work order {wo} at {_fmt(w.wo_qty)}, but {len(stale)} of its {len(rows)} ODI "
+                f"{'row' if len(rows) == 1 else 'rows'} still {'carries' if len(stale) == 1 else 'carry'} "
+                f"{carried} ({diff:+,.0f}). Re-send the work order from MIPS to ODI so batches are mixed for the "
+                f"current quantity."),
+            systems=["MIPS", "ODI"]))
     return out
 
 
@@ -327,23 +341,36 @@ def r10_wms_balance(p: SkuPosition) -> list[Finding]:
 
 
 def r11_batches(p: SkuPosition) -> list[Finding]:
-    out, seen = [], set()
+    out = []
+    by_wo: dict[str, list] = {}
     for e in p.odi:
-        if not e.wo or e.wo in seen or not e.sched_batches:
+        if e.wo and e.sched_batches:
+            by_wo.setdefault(e.wo, []).append(e)
+    for wo, rows in by_wo.items():
+        off = [e for e in rows if _differs(e.act_batches, e.sched_batches)]
+        if not off:
             continue
-        seen.add(e.wo)
-        if _differs(e.act_batches, e.sched_batches):
-            diff = e.act_batches - e.sched_batches
-            out.append(Finding(
-                "R11", e.wo, p.sku, p.description, 0, p.unit_price,
-                evidence={"work_order": e.wo, "formula": e.oracle_type, "line": e.line, "shift": e.shift,
-                          "scheduled": e.sched_batches, "mixed": e.act_batches},
-                recommendation=(
-                    f"Work order {e.wo} ({e.mips_description or p.description}, {e.line} {e.shift}) mixed "
-                    f"{_fmt(e.act_batches)} batches against {_fmt(e.sched_batches)} scheduled in MIPS ({diff:+,.0f}). "
-                    f"Record the reason (rework, recovery) so the {'extra' if diff > 0 else 'missing'} output is "
-                    f"expected in WMS."),
-                systems=["ODI", "MIPS"], base_priority=500))
+        # Every row of a work order should carry the same batch counts; report what the rows that differ say.
+        sched = _most_common(e.sched_batches for e in off)
+        mixed = _most_common(e.act_batches for e in off)
+        diff = mixed - sched
+        first = off[0]
+        disagree = len({(e.sched_batches, e.act_batches) for e in rows}) > 1
+        out.append(Finding(
+            "R11", wo, p.sku, p.description, 0, p.unit_price,
+            evidence={"work_order": wo, "formula": first.oracle_type, "line": first.line, "shift": first.shift,
+                      "scheduled": sched, "mixed": mixed, "odi_rows": len(rows), "odi_rows_differing": len(off),
+                      **({"rows_disagree": ", ".join(f"{e.entry_id} {_fmt(e.act_batches)}/{_fmt(e.sched_batches)}"
+                                                     for e in rows)} if disagree else {})},
+            recommendation=(
+                f"Work order {wo} ({first.mips_description or p.description}, {first.line} {first.shift}) mixed "
+                f"{_fmt(mixed)} batches against {_fmt(sched)} scheduled in MIPS ({diff:+,.0f})"
+                + (". Its ODI rows do not agree on the counts ("
+                   + "; ".join(f"{e.entry_id}: {_fmt(e.act_batches)} of {_fmt(e.sched_batches)}" for e in rows)
+                   + "), so correct the rows that are wrong" if disagree else "")
+                + f". Record the reason (rework, recovery) so the {'extra' if diff > 0 else 'missing'} output is "
+                  f"expected in WMS."),
+            systems=["ODI", "MIPS"], base_priority=500))
     return out
 
 
@@ -356,13 +383,14 @@ def r12_late_wrap(p: SkuPosition) -> list[Finding]:
     for wo, rows in late.items():
         units = sum(e.qty - e.allocated for e in rows)
         first = min(e.requested_ship for e in rows)
+        wrapped = max(e.wrap_end for e in rows)   # the rows of one work order should agree; take the latest
         out.append(Finding(
             "R12", wo, p.sku, p.description, units, p.unit_price,
-            evidence={"work_order": wo, "wrapping_end": f"{rows[0].wrap_end:%m/%d %H:%M}",
+            evidence={"work_order": wo, "wrapping_end": f"{wrapped:%m/%d %H:%M}",
                       "earliest_ship_date": f"{first:%m/%d}", "late_orders": len(rows),
                       "orders": ", ".join(e.ref for e in rows)},
             recommendation=(
-                f"Work order {wo} finished wrapping {rows[0].wrap_end:%m/%d %H:%M}, after the requested ship date of "
+                f"Work order {wo} finished wrapping {wrapped:%m/%d %H:%M}, after the requested ship date of "
                 f"{len(rows)} {'order' if len(rows) == 1 else 'orders'} (earliest {first:%m/%d}; {_fmt(units)} units). "
                 f"Finished goods must reach WMS before the ship date: move the run earlier or agree a new ship date "
                 f"with the customers."),

@@ -191,10 +191,13 @@ through the normal producer path, so active faults apply.
 | S9 | An ODI reload drops the work order from Albany's 7,200-unit line | R08-ODI-0002 |
 | S10 | Chicopee's order arrives with BUSS code 2717 instead of 2771 | R13-76108 |
 
-Each scenario declares the flags it must raise (and clear). On the untouched starting day, the test suite
-plays every one and checks exactly that, so the library is also the regression suite for the rules. Work-order
-numbers carry the sales date (`{date}` in a scenario key). Run one from the simulator's **Scenarios** tab, or
-with `events scenario run S5 [--reset]`.
+Changes are relative to the row as it is when the step runs (S1 adds 600 to the order, whatever it holds),
+so the "Raises" column above is what each scenario raises **on the untouched starting day**. That is the
+regression oracle: the test suite plays every scenario there and checks exactly those flags. On any other
+data, the simulator's **If you run it now** (and `events scenario list`) plays the scenario on a scratch copy
+of the log and shows what it would really raise, change or clear; a run reports the flags it actually changed.
+Work-order numbers carry the sales date (`{date}` in a scenario key). Run one from the simulator's
+**Scenarios** tab, or with `events scenario run S5 [--reset]`.
 
 ## 9. Integration faults
 
@@ -253,6 +256,7 @@ python -m recon_agent events fault add delay --source WMS --seconds 60
 python -m recon_agent events set buss.sales_order 2263245-1 "Order Quantity=7800" --note "Albany raised its order"
 python -m recon_agent events clock --rate 60                  # 1 real second = 1 plant minute
 python -m recon_agent events status
+python -m recon_agent events export --out output/export   # the source systems now: Excel, SQLite, Postgres
 ```
 
 On PowerShell, set `$env:RECON_SOURCE="events"` first. Write-back needs the simulator running at `RECON_CORRECTIONS_URL`. The simulator's delivery pump is what delivers delayed changes, so keep it running when faults are active (CLI commands also deliver what is due when they run).

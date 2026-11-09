@@ -6,6 +6,26 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+### Fixed: every figure and explanation follows the source data live
+- **Change detection.** The worklist used to announce a change only when a row's flag IDs or units moved,
+  so an edit that changed a batch count, a wrap time, a name or an explanation never reached open screens,
+  and the first row of an empty worklist was never announced. Each row is now fingerprinted on everything
+  it shows: every flag's figures, evidence, rule text, AI text and accountability, and every source record
+  behind its reconciled position.
+- **Live redraw.** A change in the data redraws the queue, the day totals, the briefing and the open detail
+  by itself; the "rows changed · Update" pill is gone. An unsent note holds the detail back until it is sent,
+  cleared or left; an expanded briefing stays open; open sections and the scroll position survive. A row
+  whose last flag clears while open says so, with the agreed figures.
+- **Every ODI row.** R07, R11 and R12 read every ODI row of a work order, not only the first (a stale row
+  further down was missed or reported as 0 units). Rows that disagree on batch counts are named.
+- **No result is written down.** Scenario changes are relative to the row as it is (`add(600)`), stories
+  describe only the action, and what a scenario will raise is a live preview played on a copy of the log
+  (simulator *If you run it now*, `events scenario list`); a run reports the flags it actually raised. The
+  assistant's example questions come from the current queue; the AI prompt quotes no fixed figures; the AI
+  cache also keys on the rule text and attribution; the R06 correction takes the plant code from the data.
+- **Live export.** The simulator's *Export now* (Excel, SQLite with the `v_sku_position` view, Postgres
+  script) and `events export` build the files from the current source rows on every download.
+
 ### Changed: data model v3 (the business team's 9 Nov mapping)
 The agent no longer replicates the five client extracts. It uses the business team's demand-to-delivery
 mapping (`BIMBO_MIPS_WMS_ODI_Data_9th_NOV.xlsx`; see [docs/DATA_MODEL_9NOV.md](docs/DATA_MODEL_9NOV.md)).

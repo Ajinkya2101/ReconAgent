@@ -4,8 +4,8 @@
   happened, which system misfired and how, the business impact, who acts and
   which record confirms it) plus a shift-handoff briefing - one structured
   (JSON-schema) output call per run.
-* ask():     a tool-using copilot that answers planner questions ("why is the
-  work order for 950513 bigger than the shortfall?") by querying the reconciled data - it never
+* ask():     a tool-using copilot that answers planner questions ("why is this
+  work order bigger than the shortfall?") by querying the reconciled data - it never
   answers from memory.
 
 Numbers always come from the deterministic engine, and so does accountability:
@@ -54,7 +54,8 @@ from MIPS to WMS before the ship date; raw materials move from WMS to MIPS when 
 
 Your readers are production planners and shift supervisors across 3 shifts. Write in plain \
 operational language: name the SKU, the quantities, the system that is wrong, and the exact correction \
-(e.g. "Cut work order WO-UBD-20260912-002 to 3,700 units: WMS already has 1,140 available"). Use only the \
+(for example "Cut work order <number> to <shortfall> units: WMS already has <available> available", with the \
+finding's own figures). Use only the \
 numbers you are given or retrieve with tools - never estimate or invent quantities. If the data cannot \
 explain a variance, say what additional record (BUSS order line, ODI mapping row, WMS locator count, MIPS \
 work order) would resolve it.

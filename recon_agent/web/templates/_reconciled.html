@@ -1,0 +1,11 @@
+{% from "_macros.html" import icon %}
+{#- The open row left the queue while it was on screen: its last flag cleared at the source. -#}
+<article class="detail detail--gone" aria-labelledby="gone-h">
+  <header class="detail-head">
+    <a class="detail-back btn btn--quiet btn--sm" href="/" data-close-detail>{{ icon("back") }}Queue</a>
+    <div class="detail-id"><h2 id="gone-h" tabindex="-1">{{ detail_gone }} has no flags now</h2></div>
+  </header>
+  <p class="detail-gone-note">A change in the source systems cleared its last flag, so it left the queue.
+  {%- if gone_position %} BUSS, Oracle, ODI, WMS and MIPS agree: demand {{ gone_position.demand|num }}, allocated
+  {{ gone_position.allocated|num }}, available {{ gone_position.available|num }}, work order {{ gone_position.wo_qty|num }}.{% endif %}</p>
+</article>
