@@ -1,6 +1,7 @@
 {% set open_key = open_key|default("") %}
+{% set ranks = store.ranks() %}{% set show_tags = store.multi_day() %}
 {% if rows %}
-<ol class="rows{% if open_key %} has-open{% endif %}" id="rows" aria-label="Rows ranked by priority">
+<ol class="rows{% if show_tags %} has-tags{% endif %}{% if open_key %} has-open{% endif %}" id="rows" aria-label="Rows ranked by priority" tabindex="-1">
   {% for row in rows %}{% include "_row.html" %}{% endfor %}
 </ol>
 {% else %}
@@ -14,7 +15,7 @@
   {% elif view == "decided" %}
   <p><b>Nothing decided yet.</b> Accepted and rejected flags collect here, with who decided and when.</p>
   {% else %}
-  <p><b>Every SKU reconciles{% if day %} for this sales day{% endif %}.</b> {{ store.res.kpis.skus_reconciled }} SKUs were checked across MIPS, ODI and WMS.</p>
+  {% include "_nodata.html" %}
   {% endif %}
 </div>
 {% endif %}

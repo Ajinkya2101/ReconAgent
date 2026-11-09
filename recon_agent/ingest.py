@@ -39,6 +39,14 @@ def num(value) -> float:
     return float(value) if isinstance(value, (int, float)) else 0.0
 
 
+CLOSED_VALUES = ("T", "TRUE", "Y", "YES", "1")
+
+
+def is_closed(value) -> bool:
+    """MIPS `Closed` flag. 'F' (open) on every line of the client extract; a closed line is not valid demand."""
+    return value is True or str(value or "").strip().upper() in CLOSED_VALUES
+
+
 @dataclass
 class MipsLine:
     sku: str
@@ -55,6 +63,7 @@ class MipsLine:
     retail_price: float
     source_system: str
     last_modified: dt.datetime | None
+    closed: bool = False   # MIPS `Closed`: the line no longer counts as demand
 
     @property
     def is_sales_order(self) -> bool:
@@ -126,6 +135,15 @@ class WmsItem:
     @property
     def allocated(self) -> float:
         return sum(o.allocated_units for o in self.orders)
+
+    @property
+    def original_order_qty(self) -> float:
+        """What the customers first ordered ('Original Ord Qty'); differs from order_qty when an order changed."""
+        return sum(o.original_qty for o in self.orders)
+
+    @property
+    def changed_orders(self) -> list[WmsCustomerOrder]:
+        return [o for o in self.orders if o.original_qty and o.original_qty != o.order_qty]
 
 
 @dataclass
@@ -243,6 +261,7 @@ def mips_lines(records: list[dict]) -> list[MipsLine]:
             retail_price=num(r["Retail Price"]),
             source_system=str(r["Source System"] or "").strip(),
             last_modified=r["Last Modify Date Time"],
+            closed=is_closed(r.get("Closed")),
         ))
     return out
 

@@ -11,8 +11,14 @@
 <span class="sev sev--{{ level|lower }}"><span class="sev-meter" aria-hidden="true"><i></i><i></i><i></i></span>{{ level }}</span>
 {%- endmacro %}
 
+{# A dash, not "no $": the flag is real, it just carries no retail value. #}
 {% macro money_or_dash(x) -%}
-{%- if x >= 0.5 %}{{ x|money }}{% else %}<span class="no-money" title="No retail value attached to this flag">no $</span>{% endif -%}
+{%- if x >= 0.5 %}{{ x|money }}{% else %}<span class="no-money" title="No retail value attached to this flag"><span aria-hidden="true">—</span><span class="sr">No retail value</span></span>{% endif -%}
+{%- endmacro %}
+
+{# SKU number in mono; plant-level rows have no SKU and say so in words. #}
+{% macro sku_label(r) -%}
+{%- if r.sku %}<span class="code">{{ r.sku }}</span>{% else %}<span class="plant">Plant-wide</span>{% endif -%}
 {%- endmacro %}
 
 {% macro ack_chip(f) -%}

@@ -335,7 +335,8 @@ class CardTest(unittest.TestCase):
         self.assertIn("Started in", card)
         self.assertIn("Under-production", card)
         self.assertIn('role--misfired', card)
-        self.assertIn("Still plans 3,500; WMS has 3,700 on order.", card)
+        # WMS shows the order was raised after it was placed (800 → 1,000): MIPS provably stale.
+        self.assertIn("Still plans the original 3,500; WMS has 3,700 on order.", card)
 
         end = time.monotonic() + 5
         while time.monotonic() < end and client.get("/api/status").json().get("narration") != "ai":

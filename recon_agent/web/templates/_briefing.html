@@ -1,17 +1,19 @@
 {% set n = store.res.narration %}
 {% set first = n.shift_briefing.split(". ")[0] %}
-<section class="briefing{% if expanded %} is-expanded{% endif %}" id="briefing" data-briefing-id="{{ store.res.kpis.sales_date }}-{{ store.loaded_at.strftime('%H%M') }}" aria-labelledby="briefing-h">
+{% set briefing_id = store.res.kpis.sales_date ~ "-" ~ store.loaded_at.strftime('%H%M') %}
+{% set is_read = store.briefing_read.get(user.name) == briefing_id %}
+<section class="briefing{% if expanded %} is-expanded{% endif %}{% if is_read %} is-read{% endif %}" id="briefing" data-briefing-id="{{ briefing_id }}" aria-labelledby="briefing-h">
   <div class="briefing-line">
     <h2 id="briefing-h">Shift briefing</h2>
-    <span class="src">{% if store.narration_is_ai %}AI briefing · {{ config.OCI_MODEL_ID }}{% elif store.narration_state == "pending" %}Rule text · AI text on the way{% elif store.narration_state == "failed" %}Rule text · AI unavailable{% else %}Rule text{% endif %} · {{ store.loaded_at|hm }}</span>
+    <span class="src">{% if store.narration_is_ai %}AI briefing · {{ config.OCI_MODEL_ID }}{% elif store.narration_state == "pending" %}From the rules · AI text on the way{% elif store.narration_state == "failed" %}From the rules · AI unavailable{% else %}From the rules{% endif %} · {{ store.loaded_at|hm }}</span>
     {% if not expanded %}
-    <p class="briefing-lede">{{ first }}.</p>
-    <button type="button" class="btn btn--quiet btn--sm" hx-get="/briefing" hx-target="#briefing" hx-swap="outerHTML">Read briefing</button>
+    <button type="button" class="btn btn--quiet btn--sm" hx-get="/briefing" hx-target="#briefing" hx-swap="outerHTML">{% if is_read %}Read again{% else %}Read briefing{% endif %}</button>
     {% else %}
-    <button type="button" class="btn btn--quiet btn--sm" data-briefing-read>Mark read</button>
+    <button type="button" class="btn btn--quiet btn--sm" data-briefing-read hx-post="/briefing/read" hx-vals='{"briefing_id": "{{ briefing_id }}"}'>Mark read</button>
     <button type="button" class="btn btn--quiet btn--sm" data-briefing-reopen>Read again</button>
     {% endif %}
   </div>
+  {% if not expanded %}<p class="briefing-lede">{{ first }}.</p>{% endif %}
   {% if expanded %}
   <div class="briefing-body">
     <p>{{ n.shift_briefing }}</p>
@@ -39,13 +41,18 @@
     <h3>Where today's flags started</h3>
     <table class="records origin-table">
       <caption class="sr">Flags by the system where the error started, from the rules' accountability records</caption>
-      <thead><tr><th scope="col">Started in</th><th scope="col" class="num">Flags</th><th scope="col" class="num">High</th><th scope="col" class="num">Units</th><th scope="col" class="num">At risk</th></tr></thead>
+      <thead><tr><th scope="col">Started in</th><th scope="col" class="num">Flags</th><th scope="col" class="num">High</th><th scope="col" class="num">Units</th><th scope="col" class="num">Flag $</th></tr></thead>
       <tbody>
         {% for name, r in origins.items() %}
         <tr><th scope="row" class="code">{{ name }}</th><td class="num">{{ r.flags }}</td><td class="num">{{ r.high }}</td><td class="num">{{ r.units|num }}</td><td class="num">{{ r.dollars|money }}</td></tr>
         {% endfor %}
       </tbody>
     </table>
+    {# Said once, where the two numbers meet: flags overlap on a SKU, so per-flag dollars outrun the total. #}
+    {% set flag_total = origins.values()|sum(attribute="dollars") %}
+    {% if flag_total > store.res.kpis.dollar_exposure %}
+    <p class="table-note">Flag $ adds up each flag's own retail value across every rule, so a SKU with several flags counts more than once. That is why the column totals {{ flag_total|money }}, more than the {{ store.res.kpis.dollar_exposure|money }} retail $ at risk.</p>
+    {% endif %}
     {% endif %}
   </div>
   {% endif %}

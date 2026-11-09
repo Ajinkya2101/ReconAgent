@@ -1,0 +1,13 @@
+{# The open queue is empty. Say why: no data has arrived yet is not the same as everything reconciles. #}
+{% set checked_skus = store.res.kpis.skus_reconciled %}
+{% set live = store.feed.mode == "events" %}
+{% if not checked_skus %}
+<p><b>Waiting for the first data.</b>
+  {% if live %}The feed is at event #{{ store.feed.seq }}. Rows appear here as MIPS, ODI and WMS publish.
+  {% else %}No MIPS, ODI or WMS extract rows are loaded yet. Rows appear here when the next extracts load.{% endif %}
+  Nothing has been reconciled, so this is not an all-clear.</p>
+{% else %}
+<p><b>Every SKU reconciles{% if day %} for this sales day{% endif %}.</b>
+  {{ checked_skus }} {{ "SKU was" if checked_skus == 1 else "SKUs were" }} checked across MIPS, ODI and WMS
+  {% if live %}in the live feed, event #{{ store.feed.seq }} at {{ store.loaded_at|hm }}{% else %}in the extracts loaded at {{ store.loaded_at|hm }}{% endif %}.</p>
+{% endif %}

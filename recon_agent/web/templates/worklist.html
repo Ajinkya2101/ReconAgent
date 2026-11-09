@@ -1,11 +1,16 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon, tag %}
-{% block title %}{% if selected and not auto_selected %}{{ selected.sku or "Plant" }} · {% endif %}Exception worklist{% endblock %}
+{% block title %}{% if selected and not auto_selected %}{{ selected.sku or "Plant-wide" }} · {% endif %}Exception worklist{% endblock %}
 {% block body %}
+<nav class="skips" aria-label="Skip links">
+  <a class="skip" href="#detail">Skip to SKU detail</a>
+  <a class="skip" href="#queue">Skip to the queue</a>
+</nav>
 {% include "_strip.html" %}
 {% set open_key = selected.key if selected and not auto_selected else "" %}
 <div class="layout{% if open_key %} has-detail{% endif %}" id="layout">
   <main class="queue-col" id="main">
+    <h1 class="sr">Open reconciliation flags</h1>
     {% set expanded = false %}
     {% include "_briefing.html" %}
 
@@ -13,6 +18,7 @@
           hx-get="/queue" hx-target="#queue" hx-push-url="false"
           hx-trigger="change, input changed delay:250ms from:#q, submit">
       <input type="hidden" name="open" value="{{ open_key }}" id="open-key">
+      {% if days|length > 1 %}
       <fieldset class="days">
         <legend class="sr">Sales day</legend>
         <label class="day day--all">
@@ -25,14 +31,30 @@
           <span class="day-face">
             {{ tag(d.date, "tag--lg") }}
             <span class="day-stats">
-              <span class="day-money">{% if d.dollars is not none %}{{ d.dollars|money }}{% endif %}</span>
-              <span class="day-sub">{{ d.rows }} rows · {{ d.flags }} open flags{% if d.dollars is not none %} · engine total at risk{% endif %}</span>
+              <span class="day-money">{% if d.dollars is not none %}{{ d.dollars|money }}{% else %}{{ d.flags }} flags{% endif %}</span>
+              <span class="day-sub">{% if d.dollars is not none %}retail $ at risk · {% endif %}{{ d.rows }} rows · {{ d.flags }} open flags</span>
             </span>
           </span>
         </label>
         {% endfor %}
         <div id="carried-in" class="carried-in">{% include "_carried_in.html" %}</div>
       </fieldset>
+      {% else %}
+      {# One open sales day: the queue is a single shelf, so the day is its label instead of a
+         filter with one choice, and the rows below don't each repeat the same tag. #}
+      <div class="days days--shelf">
+        {% for d in days %}
+        <div class="shelf">
+          {{ tag(d.date, "tag--lg") }}
+          <span class="day-stats">
+            <span class="day-money">{% if d.dollars is not none %}{{ d.dollars|money }}{% else %}{{ d.flags }} flags{% endif %}</span>
+            <span class="day-sub">{% if d.dollars is not none %}retail $ at risk · {% endif %}{{ d.rows }} rows · {{ d.flags }} open flags</span>
+          </span>
+        </div>
+        {% endfor %}
+        <div id="carried-in" class="carried-in">{% include "_carried_in.html" %}</div>
+      </div>
+      {% endif %}
 
       <div class="toolbar">
         <fieldset class="views">
@@ -44,26 +66,46 @@
           </label>
           {% endfor %}
         </fieldset>
-        <label class="search">
-          {{ icon("search") }}
-          <span class="sr">Find SKU or item</span>
-          <input id="q" type="search" name="q" value="{{ q }}" placeholder="SKU or item" autocomplete="off" spellcheck="false">
-          <kbd class="kbd" aria-hidden="true">/</kbd>
-        </label>
+        <div class="toolbar-end">
+          <label class="search">
+            {{ icon("search") }}
+            <span class="sr">Find SKU or item</span>
+            <input id="q" type="search" name="q" value="{{ q }}" placeholder="SKU or item" autocomplete="off" spellcheck="false">
+            <kbd class="kbd" aria-hidden="true">/</kbd>
+          </label>
+          <button type="button" class="btn btn--quiet btn--icon keys-btn" popovertarget="keys" title="Keyboard shortcuts (?)">{{ icon("keys", "Keyboard shortcuts") }}</button>
+        </div>
       </div>
     </form>
 
-    <p class="rank-note">Ranked by priority: retail $ at risk × severity × rule confidence. Planner decisions move rule confidence.</p>
-    <div id="queue" class="queue" aria-live="polite">
+    <div class="queue-head">
+      <p class="rank-note">Ranked by priority: retail $ at risk × severity × rule confidence. Planner decisions move rule confidence.</p>
+      <span class="queue-head-money" aria-hidden="true">Largest flag $</span>
+    </div>
+    <p class="sr" role="status" id="queue-status"></p>
+    <div id="queue" class="queue">
       {% include "_queue.html" %}
     </div>
   </main>
 
   <section id="detail" class="detail-col" aria-label="SKU detail" tabindex="-1">
     {% if selected %}{% set row = selected %}{% include "_detail.html" %}{% else %}
-    <div class="detail-empty"><p>Nothing open. Every SKU in today's extracts reconciles.</p></div>
+    <div class="detail-empty">{% include "_nodata.html" %}</div>
     {% endif %}
   </section>
+</div>
+
+<div id="keys" class="keys" popover aria-labelledby="keys-h">
+  <h2 id="keys-h">Keyboard shortcuts</h2>
+  <dl>
+    <div><dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next or previous SKU in the queue</dd></div>
+    <div><dt><kbd>Enter</kbd></dt><dd>Open it; focus moves to its detail</dd></div>
+    <div><dt><kbd>h</kbd></dt><dd>Acknowledge the SKU's High flags</dd></div>
+    <div><dt><kbd>c</kbd></dt><dd>Claim the open SKU</dd></div>
+    <div><dt><kbd>a</kbd> <kbd>r</kbd></dt><dd>Go to Accept or Reject on the current flag. <kbd>Enter</kbd> records it.</dd></div>
+    <div><dt><kbd>/</kbd></dt><dd>Find a SKU or item</dd></div>
+    <div><dt><kbd>Esc</kbd></dt><dd>Close the detail, the assistant or this list</dd></div>
+  </dl>
 </div>
 {% include "_assistant.html" %}
 {% endblock %}

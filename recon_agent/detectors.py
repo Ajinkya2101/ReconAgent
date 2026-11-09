@@ -36,7 +36,7 @@ RULES = {
     "R16": ("ODI MIPS order qty disagrees with MIPS sales orders", "8 - Missing downstream transactions", "Integration Architecture", "Medium"),
     "R17": ("Statistical outlier - possible data-entry error", "Unusually large quantity", "Production Visibility", "Medium"),
     "R18": ("WMS transaction not posted in Oracle within 10 minutes", "8 - Missing downstream transactions", "Integration Architecture", "High"),
-    "R19": ("Return to plant did not reduce received quantity", "5 - Net quantity not reflected", "Warehouse Traceability", "High"),
+    "R19": ("Return to plant did not reduce received quantity", "5 - Net quantity not reflected", "Returns & Adjustments", "High"),
 }
 
 SEVERITY_WEIGHT = {"High": 3.0, "Medium": 2.0, "Low": 1.0}
@@ -130,18 +130,25 @@ def r02_untraceable_inventory(p: SkuPosition) -> list[Finding]:
         return []
     sent = p.active_runs[0].net_units_ordered
     later = p.demand_after_order
+    inventory, requirement = p.implied_inventory, p.consolidated_requirement
+    # The correction names the resulting requirement, as the client's example does ("Apply the 1,200 units
+    # to the active sales-order lines and reduce the production requirement to 800 units").
+    verb = "keep" if abs(requirement - sent) < 0.5 else "set"
     return [Finding(
-        "R02", p.sku, p.sku, p.description, p.implied_inventory, p.unit_price,
+        "R02", p.sku, p.sku, p.description, inventory, p.unit_price,
         evidence={"mips_demand": p.demand_at_order, "odi_net_ordered_first_run": sent,
                   "mips_beginning_inventory_recorded": p.recorded_inventory,
+                  "requirement_after_inventory": requirement,
                   **({"demand_changed_after_order": later} if later else {})},
         recommendation=(
             f"MIPS sent {_fmt(sent)} to production against {_fmt(p.demand_at_order)} demand"
             + (f" (demand has since changed by {later:+,.0f}, which is new demand, not inventory)" if later else "")
             + ", so "
-            f"{_fmt(p.implied_inventory)} units of inventory were applied - but MIPSBeginningInventoryQty "
-            f"is 0. Identify the schedule line holding that inventory (likely a zero-qty or planning line) "
-            f"and record it as beginning inventory so WMS tickets and Oracle can trace it."),
+            f"{_fmt(inventory)} units of inventory were applied - but MIPSBeginningInventoryQty is 0, so no "
+            f"system can trace them. Apply the {_fmt(inventory)} units to the active sales-order lines (not a "
+            f"zero-quantity or planning line), {verb} the production requirement at {_fmt(requirement)} units "
+            f"({_fmt(p.demand_total)} demand - {_fmt(inventory)} inventory), and record them as beginning "
+            f"inventory so WMS tickets and Oracle can trace them."),
         systems=["MIPS", "ODI"])]
 
 
@@ -246,16 +253,34 @@ def r09_order_mismatch(p: SkuPosition) -> list[Finding]:
     if abs(diff) <= config.QTY_TOLERANCE_UNITS:
         return []
     last_mod = max((l.last_modified for l in p.lines if l.last_modified), default=None)
-    direction = (f"WMS carries {_fmt(diff)} more units than MIPS scheduled - the order changed after MIPS "
-                 f"last synced{f' ({last_mod:%m/%d %H:%M})' if last_mod else ''}. Confirm the WMS order and "
-                 f"add {_fmt(diff)} to the MIPS requirement, or production will be short."
-                 if diff > 0 else
-                 f"MIPS scheduled {_fmt(-diff)} more units than WMS has on order. Refresh MIPS from the "
-                 f"order source; the extra {_fmt(-diff)} units are an over-production candidate.")
+    # Scenario 6 evidence in the client's own report: 'Original Ord Qty' differs from 'Order Qty' when a
+    # customer order changed after it was placed. MIPS still planning the original total proves the change
+    # never reached MIPS.
+    changed = p.wms.changed_orders
+    original = p.wms.original_order_qty
+    stale_original = bool(changed) and abs(original - p.demand_current) <= config.QTY_TOLERANCE_UNITS
+    if stale_original:
+        changes = "; ".join(f"{o.customer} {_fmt(o.original_qty)} → {_fmt(o.order_qty)}" for o in changed)
+        direction = (f"WMS customer orders changed after they were placed ({changes}): the item total went from "
+                     f"{_fmt(original)} to {_fmt(p.wms_order_qty)}, but MIPS still plans the original "
+                     f"{_fmt(p.demand_current)}, so the change never reached MIPS. "
+                     + (f"Add {_fmt(diff)} to the MIPS requirement, or production will be short."
+                        if diff > 0 else
+                        f"Reduce the MIPS requirement by {_fmt(-diff)}; as planned they are over-production."))
+    elif diff > 0:
+        direction = (f"WMS carries {_fmt(diff)} more units than MIPS scheduled - the order changed after MIPS "
+                     f"last synced{f' ({last_mod:%m/%d %H:%M})' if last_mod else ''}. Confirm the WMS order and "
+                     f"add {_fmt(diff)} to the MIPS requirement, or production will be short.")
+    else:
+        direction = (f"MIPS scheduled {_fmt(-diff)} more units than WMS has on order. Refresh MIPS from the "
+                     f"order source; the extra {_fmt(-diff)} units are an over-production candidate.")
     return [Finding(
         "R09", p.sku, p.sku, p.description, diff, p.unit_price,
         evidence={"mips_demand_sales_date": p.demand_current, "wms_order_qty": p.wms_order_qty,
-                  "mips_last_modified": str(last_mod) if last_mod else None},
+                  "mips_last_modified": str(last_mod) if last_mod else None,
+                  **({"wms_original_order_qty": original,
+                      "wms_orders_changed": "; ".join(f"{o.customer} {_fmt(o.original_qty)} → {_fmt(o.order_qty)}"
+                                                      for o in changed)} if changed else {})},
         recommendation=direction, systems=["MIPS", "WMS"])]
 
 
@@ -312,6 +337,30 @@ SKU_RULES = [r01_first_line_allocation, r02_untraceable_inventory, r05_recovery_
 # Run / plant-level rules
 # --------------------------------------------------------------------------
 
+MOVES = ("line", "day", "sequence")   # how a run can move (client scenario 3), most visible first
+
+
+def _move(ghost, real) -> str | None:
+    """How `real` differs from the slot `ghost` was left in: another line, production day or run sequence."""
+    if real.line != ghost.line:
+        return "line"
+    if ghost.start and real.start and ghost.start.date() != real.start.date():
+        return "day"
+    if ghost.start and real.start and ghost.start != real.start:
+        return "sequence"
+    return None
+
+
+def _moved_text(r, to, move: str) -> tuple[str, str]:
+    """(what moved, where the copy stays) for the R04 correction."""
+    if move == "line":
+        return f"from {r.line} to {to.line}", f"on {r.line}"
+    if move == "day":
+        return (f"from production day {r.start:%m/%d} to {to.start:%m/%d} ({to.line})",
+                f"on {r.start:%m/%d}")
+    return f"from the {r.start:%H:%M} slot to {to.start:%H:%M} on {r.line}", f"in the {r.start:%H:%M} slot"
+
+
 def r03_r04_run_structure(src: SourceData, positions: dict[str, SkuPosition]) -> list[Finding]:
     out = []
     real = [r for r in src.fg_runs if r.net_units_ordered or r.wrapped_units]
@@ -320,19 +369,21 @@ def r03_r04_run_structure(src: SourceData, positions: dict[str, SkuPosition]) ->
             continue
         price = positions[r.sku].unit_price if r.sku in positions else config.DEFAULT_UNIT_PRICE
         base = re.sub(r"A$", "", r.formula_type)
-        # A moved run shows up as a zero, no-shift copy whose formula (± 'A' alt suffix)
-        # actually ran on another line.
-        moved_to = next((x for x in real if re.sub(r"A$", "", x.formula_type) == base
-                         and x.line != r.line), None)
+        # A moved run shows up as a zero, no-shift copy whose formula (± 'A' alt suffix) actually ran
+        # somewhere else: on another line, on another production day, or in another run sequence.
+        candidates = [(x, m) for x in real if re.sub(r"A$", "", x.formula_type) == base
+                      for m in [_move(r, x)] if m]
+        moved_to, move = min(candidates, key=lambda c: MOVES.index(c[1]), default=(None, None))
         if r.shift is None and moved_to:
+            what, where = _moved_text(r, moved_to, move)
             out.append(Finding(
                 "R04", f"{r.formula_type}-{r.sku}", r.sku, r.description, 0, price,
                 evidence={"ghost_run": _run_label(r), "actual_run": _run_label(moved_to),
-                          "actual_run_sku": moved_to.sku},
+                          "actual_run_sku": moved_to.sku, "moved_to_another": move},
                 recommendation=(
-                    f"Run {r.formula_type} was moved from {r.line} to {moved_to.line} "
-                    f"({moved_to.formula_type}). A zero-quantity copy remains on {r.line}. Confirm inventory "
-                    f"and WMS work-order allocations moved with the run, then remove the ghost entry."),
+                    f"Run {r.formula_type} was moved {what} ({moved_to.formula_type}). A zero-quantity copy "
+                    f"remains {where}. Confirm inventory and WMS work-order allocations moved with the run, "
+                    f"then remove the ghost entry."),
                 systems=["MIPS", "ODI"], base_priority=1000))
         else:
             out.append(Finding(

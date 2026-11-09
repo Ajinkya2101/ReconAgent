@@ -105,9 +105,12 @@ class Projector:
     def _track_demand(self, ev: Event, old: dict | None, new: dict | None) -> None:
         at = 0 if ev.producer == INITIAL_LOAD else ev.source_seq
         if ev.entity == "mips.order_line":
+            # A closed line is no longer demand: closing it after the run was ordered reads as demand removed.
+            open_qty = (ingest.num(new["Order Quantity"]) if new and not ingest.is_closed(new.get("Closed"))
+                        else 0.0)
             self.line_history.setdefault(ev.key, []).append(
                 (at, ingest.norm_sku(new["FG Oracle Ref"]) if new and new["FG Oracle Ref"] is not None else None,
-                 ingest.num(new["Order Quantity"]) if new else 0.0))
+                 open_qty))
         elif ev.entity == "odi.finished_good" and (
                 old is None or new is None
                 or any(old.get(c) != new.get(c) for c in ("NetUnitsOrdered", "OracleFGNumber"))):

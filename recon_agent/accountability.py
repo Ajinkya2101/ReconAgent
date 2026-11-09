@@ -86,10 +86,14 @@ def _r03(f, p, ev):
                              "never reduces real demand.")})
 
 
+MOVED_TO = {"line": "another line", "day": "another production day", "sequence": "another run sequence"}
+
+
 def _r04(f, p, ev):
+    where = MOVED_TO.get(ev.get("moved_to_another", "line"), "another line")
     return _record(
         f, "Traceability gap", "MIPS", "Scheduling",
-        "A run was moved to another line and the original schedule entry was not removed.", "certain",
+        f"A run was moved to {where} and the original schedule entry was not removed.", "certain",
         {"MIPS": ("Misfired", f"Moved the run ({ev['actual_run']}) but left the original entry "
                               f"({ev['ghost_run']}) on the schedule."),
          "ODI": ("Affected", f"Still holds a zero-quantity copy: {ev['ghost_run']}."),
@@ -174,6 +178,20 @@ def _r09(f, p, ev):
     more = f.units < 0   # MIPS plans more than WMS has on order
     impact = "Over-production" if more else "Under-production"
     when = f" (last modified {_when(ev['mips_last_modified'])})" if ev.get("mips_last_modified") else ""
+    odi_detail = (f"Production is sized to the MIPS figure: {_n(gap)} more than WMS has on order." if more else
+                  f"Production is sized to the MIPS figure: {_n(gap)} short of the WMS order.")
+    # The WMS report itself shows the customer orders changed after they were placed ('Original Ord Qty'),
+    # and MIPS still plans the original total: the change never reached MIPS. The data proves it.
+    original = ev.get("wms_original_order_qty")
+    if original is not None and original == mips:
+        return _record(
+            f, impact, "MIPS", "Stale data",
+            f"The customer orders changed in WMS after they were placed ({_n(original)} → {_n(wms)}); "
+            f"MIPS still plans the original {_n(mips)}{when}.", "certain",
+            {"MIPS": ("Misfired", f"Still plans the original {_n(mips)}; WMS has {_n(wms)} on order."),
+             "WMS": ("Reference", f"Holds the changed customer orders: {_n(wms)} (originally {_n(original)}): "
+                                  f"{ev.get('wms_orders_changed', '')}."),
+             "ODI": ("Affected", odi_detail)}, handoff="WMS → MIPS")
     # Demand MIPS changed after production was ordered, in the direction of the gap, means MIPS itself
     # moved (a planning change), not that WMS moved while MIPS was not refreshed.
     changed = p.demand_after_order if p else 0
@@ -189,10 +207,8 @@ def _r09(f, p, ev):
              "WMS": ("Reference", f"Holds the current customer orders: {_n(wms)}."), "ODI": odi})
     if more:
         cause = f"MIPS plans more than the customers have on order in WMS; it was not refreshed{when}."
-        odi_detail = f"Production is sized to the MIPS figure: {_n(gap)} more than WMS has on order."
     else:
         cause = f"The customer order changed in WMS after MIPS last synced{when}."
-        odi_detail = f"Production is sized to the MIPS figure: {_n(gap)} short of the WMS order."
     return _record(
         f, impact, "MIPS", "Stale data", cause, "likely",
         {"MIPS": ("Misfired", f"Still plans {_n(mips)}; WMS has {_n(wms)} on order."),

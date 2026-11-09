@@ -1,5 +1,6 @@
 {% set row = selected %}
 {% include "_detail.html" %}
+{% if announce %}<div id="announce" hx-swap-oob="innerHTML">{{ announce }}</div>{% endif %}
 {% if oob_row %}
 {% set oob = true %}{% set open_key = row.key %}
 {% include "_row.html" %}

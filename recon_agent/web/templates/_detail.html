@@ -1,14 +1,18 @@
-{% from "_macros.html" import icon, tag, severity, money_or_dash %}
+{% from "_macros.html" import icon, tag, severity, money_or_dash, sku_label %}
+{#- Action first: who owns it, the 15-minute acknowledgment, what the surplus does, then each
+    flag's correction and decision. The ledger arithmetic follows as the engine's working. -#}
 {% set L = ledger(row) %}
 {% set today = day_tag(row.sales_date) %}
 {% set n_open = row.open_flags|length %}
 {% set mine = row.claim and row.claim.user == user.name %}
+{% set pending = store.pending_acks(row) %}
+{% set notes = store.notes.get(row.key, []) %}
 <article class="detail" data-key="{{ row.key }}" aria-labelledby="detail-h">
   <header class="detail-head">
     <a class="detail-back btn btn--quiet btn--sm" href="/" data-close-detail>{{ icon("back") }}Queue</a>
     <div class="detail-id">
       {{ tag(row.sales_date, "tag--lg") }}
-      <h2 id="detail-h"><span class="code">{{ row.sku or "PLANT" }}</span> <span class="detail-item">{{ row.description }}</span></h2>
+      <h2 id="detail-h" tabindex="-1">{{ sku_label(row) }} <span class="detail-item">{{ row.description }}</span></h2>
     </div>
     <div class="detail-money">
       <span class="detail-dollars">{{ money_or_dash(row.dollars) }}</span>
@@ -16,7 +20,7 @@
     </div>
     <div class="claim" id="claim">
       {% if not row.claim %}
-      <button class="btn btn--sm" hx-post="/row/{{ row.key }}/claim" hx-target="#detail">{{ icon("claim") }}Claim</button>
+      <button class="btn btn--sm" hx-post="/row/{{ row.key }}/claim" hx-target="#detail" data-claim>{{ icon("claim") }}Claim</button>
       <span class="claim-note">Let other supervisors see you're on it</span>
       {% elif mine %}
       <span class="claim-state">{{ icon("claim") }}Claimed by you · {{ row.claim.at|hm }}</span>
@@ -27,9 +31,80 @@
     </div>
   </header>
 
+  {% macro ackbar(where, pending, row) -%}
+  {%- set first = store.ack_state(pending[0]) -%}
+  <div class="ackbar ackbar--{{ first.state }} ackbar--{{ where }}">
+    {{ icon("clock") }}
+    <p class="ackbar-text">
+      <b>{{ pending|length }} High {{ "flag" if pending|length == 1 else "flags" }}</b>
+      {% if first.state == "due" %}· acknowledge by <b>{{ first.due|hm }}</b>, {{ first.minutes }} min left
+      {% else %}· acknowledgment overdue by <b>{{ first.minutes }} min</b>{% endif %}
+    </p>
+    <button class="btn btn--sm btn--ack" hx-post="/row/{{ row.key }}/ack" hx-target="#detail" hx-disabled-elt="this" data-ack-row>{{ icon("check") }}Acknowledge{% if pending|length > 1 %} all {{ pending|length }}{% endif %}</button>
+  </div>
+  {%- endmacro %}
+  {% if pending %}{{ ackbar("top", pending, row) }}{% endif %}
+
+  {% if notes %}
+  <section class="handoff" aria-labelledby="handoff-h">
+    <h3 id="handoff-h">Shift notes <span class="count">{{ notes|length }}</span></h3>
+    <ol class="notes">
+      {% for n in notes|reverse %}
+      <li><p class="note-by"><b>{{ n.user }}</b> <time>{{ n.at|hm }}</time></p><p class="note-text">{{ n.text }}</p></li>
+      {% endfor %}
+    </ol>
+  </section>
+  {% endif %}
+
+  {% if L %}
+  {% set next = day_tag(L.next_day) %}
+  <section class="position" aria-labelledby="position-h">
+    <h3 id="position-h">Supply against demand</h3>
+    <figure class="track{% if row.carry_accepted %} is-retagged{% endif %}{% if retag_now %} retag-now{% endif %}"
+            style="--from:{{ today.fill }};--to:{{ next.fill }};--demand:{{ L.pct.demand }}%">
+      <figcaption class="sr">Supply against demand on one scale: inventory {{ L.inventory|num }}, wrapped {{ L.wrapped|num }}{% if L.returns %} of which {{ L.returns|num }} returned{% endif %}, demand {{ L.demand|num }}{% if L.surplus %}, surplus {{ L.surplus|num }}{% endif %}{% if L.short %}, short {{ L.short|num }}{% endif %}.</figcaption>
+      <div class="track-bar" aria-hidden="true">
+        <span class="seg seg--inv" style="left:0;width:{{ L.pct.inv }}%"></span>
+        <span class="seg seg--wrap" style="left:{{ L.pct.inv }}%;width:{{ L.pct.wrap }}%"></span>
+        {% if L.short %}<span class="seg seg--short" style="left:{{ L.pct.inv + L.pct.wrap }}%;width:{{ L.pct.short }}%"></span>{% endif %}
+        {% if L.surplus %}<span class="seg seg--surplus{% if today.fill == '#ffffff' or next.fill == '#ffffff' %} is-white{% endif %}" style="left:{{ L.pct.demand }}%;width:{{ L.pct.surplus }}%"></span>{% endif %}
+        <span class="track-end" style="left:{{ L.pct.demand }}%"></span>
+      </div>
+      <div class="track-legend" aria-hidden="true">
+        <span><i class="key key--inv"></i>Inventory {{ L.inventory|num }}</span>
+        <span><i class="key key--wrap"></i>Wrapped {{ L.wrapped|num }}{% if L.returns %} · {{ L.returns|num }} returned{% endif %}</span>
+        <span class="track-demand-label">Demand {{ L.demand|num }}</span>
+        {% if L.surplus %}
+        <span class="track-carry">
+          {% if row.carry_accepted %}Carried {{ L.surplus|num }} {{ icon("arrow") }} {{ tag(L.next_day, "tag--xs") }}<em>awaiting MIPS correction</em>
+          {% else %}Surplus {{ L.surplus|num }} still on {{ tag(row.sales_date, "tag--xs") }}{% endif %}
+        </span>
+        {% elif L.short %}
+        <span><i class="key key--short"></i>Short {{ L.short|num }}</span>
+        {% endif %}
+      </div>
+    </figure>
+  </section>
+  {% endif %}
+
+  <section class="flags" aria-labelledby="flags-h">
+    <h3 id="flags-h">{% if n_open %}Decide{% else %}Flags{% endif %} <span class="count">{{ row.flags|length }}</span></h3>
+    {% for f in row.flags %}{% include "_flag.html" %}{% endfor %}
+    {% if row.is_open %}
+    <details class="note-add">
+      <summary>{{ icon("note") }}Leave a note for the next shift <span>without deciding</span></summary>
+      <form class="note-form" hx-post="/row/{{ row.key }}/note" hx-target="#detail" hx-disabled-elt="find button">
+        <label class="note"><span class="sr">Note for the next shift</span>
+          <textarea name="text" rows="2" required maxlength="400" placeholder="What you checked, changed or are waiting on"></textarea></label>
+        <button class="btn btn--sm" type="submit">Add note</button>
+      </form>
+    </details>
+    {% endif %}
+  </section>
+
   {% if L %}
   <section class="ledger" aria-labelledby="ledger-h">
-    <h3 id="ledger-h">Reconciled position</h3>
+    <h3 id="ledger-h">How the engine got here</h3>
     <dl class="equation">
       <div class="eq-row">
         <dt><span class="eq-op" aria-hidden="true"></span>Demand, all {{ L.lines }} MIPS {{ "line" if L.lines == 1 else "lines" }}
@@ -61,32 +136,6 @@
       </div>
     </dl>
 
-    {% set next = day_tag(L.next_day) %}
-    <figure class="track{% if row.carry_accepted %} is-retagged{% endif %}{% if retag_now %} retag-now{% endif %}"
-            style="--from:{{ today.fill }};--to:{{ next.fill }};--demand:{{ L.pct.demand }}%">
-      <figcaption class="sr">Supply against demand on one scale: inventory {{ L.inventory|num }}, wrapped {{ L.wrapped|num }}{% if L.returns %} of which {{ L.returns|num }} returned{% endif %}, demand {{ L.demand|num }}{% if L.surplus %}, surplus {{ L.surplus|num }}{% endif %}{% if L.short %}, short {{ L.short|num }}{% endif %}.</figcaption>
-      <div class="track-bar" aria-hidden="true">
-        <span class="seg seg--inv" style="left:0;width:{{ L.pct.inv }}%"></span>
-        <span class="seg seg--wrap" style="left:{{ L.pct.inv }}%;width:{{ L.pct.wrap }}%"></span>
-        {% if L.short %}<span class="seg seg--short" style="left:{{ L.pct.inv + L.pct.wrap }}%;width:{{ L.pct.short }}%"></span>{% endif %}
-        {% if L.surplus %}<span class="seg seg--surplus{% if today.fill == '#ffffff' or next.fill == '#ffffff' %} is-white{% endif %}" style="left:{{ L.pct.demand }}%;width:{{ L.pct.surplus }}%"></span>{% endif %}
-        <span class="track-end" style="left:{{ L.pct.demand }}%"></span>
-      </div>
-      <div class="track-legend" aria-hidden="true">
-        <span><i class="key key--inv"></i>Inventory {{ L.inventory|num }}</span>
-        <span><i class="key key--wrap"></i>Wrapped {{ L.wrapped|num }}{% if L.returns %} · {{ L.returns|num }} returned{% endif %}</span>
-        <span class="track-demand-label">Demand {{ L.demand|num }}</span>
-        {% if L.surplus %}
-        <span class="track-carry">
-          {% if row.carry_accepted %}Carried {{ L.surplus|num }} {{ icon("arrow") }} {{ tag(L.next_day, "tag--xs") }}<em>awaiting MIPS correction</em>
-          {% else %}Surplus {{ L.surplus|num }} still on {{ tag(row.sales_date, "tag--xs") }}{% endif %}
-        </span>
-        {% elif L.short %}
-        <span><i class="key key--short"></i>Short {{ L.short|num }}</span>
-        {% endif %}
-      </div>
-    </figure>
-
     <table class="systems">
       <caption class="sr">Each system's quantity on the same scale as demand</caption>
       <tbody>
@@ -101,11 +150,6 @@
     </table>
   </section>
   {% endif %}
-
-  <section class="flags" aria-labelledby="flags-h">
-    <h3 id="flags-h">Flags <span class="count">{{ row.flags|length }}</span></h3>
-    {% for f in row.flags %}{% include "_flag.html" %}{% endfor %}
-  </section>
 
   {% set p = row.position %}
   {% if p and (p.lines or p.runs or p.wms) %}
@@ -146,4 +190,10 @@
     {% endif %}
   </details>
   {% endif %}
+
+  {# Phone: the way back and the 15-minute acknowledgment sit in the thumb zone. #}
+  <div class="dock">
+    <a class="btn btn--quiet dock-back" href="/" data-close-detail>{{ icon("back") }}Queue</a>
+    {% if pending %}{{ ackbar("dock", pending, row) }}{% endif %}
+  </div>
 </article>

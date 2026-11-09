@@ -1,9 +1,10 @@
 {% from "_macros.html" import tag %}
-{# Freshness of the data on screen. /changes re-sends it out of band, so it follows the feed. #}
+{# Freshness of the data on screen. /changes re-sends it out of band, so it follows the feed.
+   The asof-wide parts drop on narrow screens; the tag and the time always stay. #}
 <span class="asof-detail" id="asof-detail"{% if asof_oob %} hx-swap-oob="true"{% endif %}>
 {%- if store.feed.mode == "events" -%}
-  {{ tag(store.sales_date, "tag--xs") }} event #{{ store.feed.seq }} · plant time {{ store.loaded_at.strftime("%H:%M:%S") }}
+  {{ tag(store.sales_date, "tag--xs") }} <span class="asof-wide">event #{{ store.feed.seq }} · plant time </span><time>{{ store.loaded_at.strftime("%H:%M:%S") }}</time>
 {%- else -%}
-  MIPS · ODI · WMS for {{ tag(store.sales_date, "tag--xs") }} loaded {{ store.loaded_at|hm }}
+  <span class="asof-wide">MIPS · ODI · WMS for </span>{{ tag(store.sales_date, "tag--xs") }} <span class="asof-wide">loaded </span><time>{{ store.loaded_at|hm }}</time>
 {%- endif -%}
 </span>

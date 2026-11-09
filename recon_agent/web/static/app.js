@@ -3,22 +3,31 @@
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
   const wide = () => window.matchMedia("(min-width: 1100px)").matches;
+  const visible = (el) => !!el && el.getClientRects().length > 0;
 
   function markOpen(key) {
     const layout = $("#layout"), rows = $("#rows"), open = $("#open-key");
     if (!layout) return;
     $$(".row.is-current").forEach((r) => r.classList.remove("is-current"));
-    if (key) $("#row-" + CSS.escape(key))?.classList.add("is-current");
+    $$(".row-link[aria-current]").forEach((a) => a.removeAttribute("aria-current"));
+    if (key) {
+      const row = $("#row-" + CSS.escape(key));
+      row?.classList.add("is-current");
+      $(".row-link", row || document.createElement("i"))?.setAttribute("aria-current", "true");
+    }
     rows?.classList.toggle("has-open", !!key);
     layout.classList.toggle("has-detail", !!key);
     if (open) open.value = key || "";
   }
 
   function closeDetail() {
+    const key = $("#open-key")?.value;
     markOpen("");
     const q = new URLSearchParams(location.search);
     q.delete("open");
     history.pushState({}, "", "/" + (q.toString() ? "?" + q : ""));
+    // Back to where the supervisor left the queue.
+    if (key) $("#row-" + CSS.escape(key) + " .row-link")?.focus({ preventScroll: false });
   }
 
   // Opening a row (queue, briefing actions, assistant answers).
@@ -40,12 +49,9 @@
     }
     if (e.target.closest("[data-assistant]")) toggleAssistant();
     if (e.target.closest("[data-assistant-close]")) toggleAssistant(false);
-    if (e.target.closest("[data-briefing-read]")) {
-      const b = $("#briefing");
-      try { localStorage.setItem("briefing-read", b.dataset.briefingId); } catch {}
-      b.classList.add("is-read");
-    }
-    if (e.target.closest("[data-briefing-reopen]")) $("#briefing").classList.remove("is-read");
+    // Marked read on the server for this person (hx-post); folded here at once.
+    if (e.target.closest("[data-briefing-read]")) $("#briefing")?.classList.add("is-read");
+    if (e.target.closest("[data-briefing-reopen]")) $("#briefing")?.classList.remove("is-read");
   });
 
   function toggleAssistant(force) {
@@ -58,16 +64,30 @@
     else btn?.focus();
   }
 
-  // New detail content: bring it to the top and move focus there on small screens.
+  // After an action the button that was pressed is gone (the detail re-renders), so remember
+  // which flag it belonged to and put focus back on that flag's heading.
+  let refocus = null;
+  document.addEventListener("htmx:beforeRequest", (e) => {
+    if (e.detail.target?.id !== "detail") return;   // the background poll must not clear it
+    const flag = e.detail.elt.closest?.(".flag");
+    refocus = flag ? flag.getAttribute("aria-labelledby") : null;
+  });
+
+  // New detail content: bring it to the top, and move focus into it at every width so the
+  // keyboard and screen reader follow the supervisor from the queue to the decision.
   document.addEventListener("htmx:afterSwap", (e) => {
-    if (e.detail.target.id === "detail") {
-      const key = $(".detail", e.detail.target)?.dataset.key;
-      if (e.detail.requestConfig?.verb === "get") {
-        e.detail.target.scrollTop = 0;
-        if (key) markOpen(key);
-        if (!wide()) e.detail.target.focus({ preventScroll: true });
-      }
+    if (e.detail.target.id !== "detail") return;
+    const key = $(".detail", e.detail.target)?.dataset.key;
+    if (e.detail.requestConfig?.verb === "get") {
+      e.detail.target.scrollTop = 0;
+      if (key) markOpen(key);
+      $("#detail-h")?.focus({ preventScroll: true });
+    } else {
+      const target = (refocus && document.getElementById(refocus)) || $("#detail-h");
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "nearest" });
     }
+    refocus = null;
   });
   // A question that was answered clears the box for the next one.
   document.addEventListener("htmx:afterRequest", (e) => {
@@ -78,23 +98,47 @@
     markOpen(m ? decodeURIComponent(m[1]) : "");
   });
 
-  // Keyboard: / search, j/k move through rows, Esc closes.
+  // The flag a shortcut acts on: the one holding focus, else the first one still open.
+  function currentFlag() {
+    const here = document.activeElement?.closest?.("#detail .flag:not(.is-decided)");
+    return here || $("#detail .flag:not(.is-decided)");
+  }
+  function press(el) { if (el && !el.disabled) el.click(); return !!el; }
+  function goTo(el) {
+    if (!el) return false;
+    el.scrollIntoView({ block: "center" });
+    el.focus({ preventScroll: true });
+    return true;
+  }
+
+  // Keyboard: / search, j/k move through rows, h acknowledge, c claim, a/r go to Accept or
+  // Reject (Enter records it: a decision is never one stray keystroke), ? shortcuts, Esc closes.
   document.addEventListener("keydown", (e) => {
     const typing = e.target.closest("input, textarea, select, [contenteditable]");
+    const keys = $("#keys");
     if (e.key === "Escape") {
+      if (keys?.matches(":popover-open")) return;   // the popover closes itself
       if (!$("#assistant")?.hasAttribute("hidden")) return toggleAssistant(false);
-      if ($("#layout")?.classList.contains("has-detail")) return closeDetail();
+      if ($("#layout")?.classList.contains("has-detail") && !typing) return closeDetail();
     }
     if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    const detailOpen = !!$("#detail .detail");
     if (e.key === "/") { e.preventDefault(); $("#q")?.focus(); }
-    if (e.key === "j" || e.key === "k") {
+    else if (e.key === "?") { e.preventDefault(); keys?.togglePopover?.(); }
+    else if (e.key === "j" || e.key === "k") {
       const links = $$(".row-link");
       if (!links.length) return;
-      const i = links.indexOf(document.activeElement);
-      const next = links[Math.max(0, Math.min(links.length - 1, i + (e.key === "j" ? 1 : -1)))] || links[0];
+      let i = links.indexOf(document.activeElement);
+      if (i < 0) i = links.findIndex((a) => a.hasAttribute("aria-current"));
+      const step = e.key === "j" ? 1 : -1;
+      const next = i < 0 ? links[0] : links[Math.max(0, Math.min(links.length - 1, i + step))];
       next.focus();
       next.scrollIntoView({ block: "nearest" });
     }
+    else if (e.key === "h" && detailOpen) { if (press($$("[data-ack-row]").find(visible))) e.preventDefault(); }
+    else if (e.key === "c" && detailOpen) { if (press($("#detail [data-claim]"))) e.preventDefault(); }
+    else if (e.key === "a" && detailOpen) { if (goTo($("[data-accept]", currentFlag() || document.createElement("i")))) e.preventDefault(); }
+    else if (e.key === "r" && detailOpen) { if (goTo($("[data-reject]", currentFlag() || document.createElement("i")))) e.preventDefault(); }
   });
 
   // Server push: hear about changes the moment the feed moves. The poll on #changes stays as a fallback.
@@ -104,10 +148,4 @@
     const stream = new EventSource("/stream?since=" + since);
     stream.addEventListener("changed", () => document.body.dispatchEvent(new CustomEvent("recon:changed")));
   }
-
-  // A briefing already marked read for this run stays folded away.
-  try {
-    const b = $("#briefing");
-    if (b && localStorage.getItem("briefing-read") === b.dataset.briefingId) b.classList.add("is-read");
-  } catch {}
 })();

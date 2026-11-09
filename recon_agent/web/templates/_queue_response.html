@@ -2,6 +2,8 @@
 {% set oob = true %}{% set since = version %}{% set keys = [] %}{% set checked = store.now() %}
 {% include "_changes.html" %}
 {% for v in VIEWS %}<b class="view-count" id="count-{{ v }}" hx-swap-oob="outerHTML">{{ counts[v] }}</b>{% endfor %}
+{# One line for screen readers instead of re-reading the whole queue on every filter change. #}
+<p id="queue-status" hx-swap-oob="innerHTML">{{ rows|length }} {{ "row" if rows|length == 1 else "rows" }}{% if q %} matching “{{ q }}”{% endif %} in {{ VIEWS[view] }}.</p>
 {% if detail_row %}
 <div id="detail" hx-swap-oob="innerHTML">{% set row = detail_row %}{% include "_detail.html" %}</div>
 {% endif %}

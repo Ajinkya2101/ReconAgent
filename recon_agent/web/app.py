@@ -147,9 +147,14 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 "counts": store.counts(user["name"]), "version": store.version}
 
     def detail_response(request: Request, row: Row, user: dict, oob_row: bool = True,
-                        retag_now: bool = False) -> HTMLResponse:
+                        retag_now: bool = False, announce: str = "") -> HTMLResponse:
+        """The SKU detail, plus (after an action) its queue row and counts out of band, and one
+        line for screen readers saying what just happened."""
         return render(request, "_detail_response.html", user=user, selected=row, oob_row=oob_row,
-                      version=store.version, retag_now=retag_now)
+                      version=store.version, retag_now=retag_now, announce=announce)
+
+    def label(row: Row) -> str:
+        return row.sku or "the plant-wide row"
 
     # --- identity ----------------------------------------------------------------
     @app.get("/signin", response_class=HTMLResponse)
@@ -257,17 +262,46 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.post("/row/{key}/claim", response_class=HTMLResponse)
     def claim(request: Request, key: str):
         user = require_user(request)
-        return detail_response(request, store.claim(key, user["name"]), user)
+        row = store.claim(key, user["name"])
+        return detail_response(request, row, user, announce=f"You claimed {label(row)}.")
 
     @app.post("/row/{key}/release", response_class=HTMLResponse)
     def release(request: Request, key: str):
         user = require_user(request)
-        return detail_response(request, store.release(key, user["name"]), user)
+        row = store.release(key, user["name"])
+        return detail_response(request, row, user, announce=f"You released {label(row)}.")
 
     @app.post("/flags/{flag_id}/ack", response_class=HTMLResponse)
     def acknowledge(request: Request, flag_id: str):
         user = require_user(request)
-        return detail_response(request, store.acknowledge(flag_id, user["name"]), user)
+        try:
+            row = store.acknowledge(flag_id, user["name"])
+        except KeyError:
+            raise HTTPException(404, f"No flag {flag_id}")
+        return detail_response(request, row, user, announce=f"Acknowledged {flag_id.split('-', 1)[0]} on {label(row)}.")
+
+    @app.post("/row/{key}/ack", response_class=HTMLResponse)
+    def acknowledge_row(request: Request, key: str):
+        """Acknowledge every High flag on the row still waiting, from the detail's ack bar."""
+        user = require_user(request)
+        if key not in store.rows:
+            raise HTTPException(404, f"No open row {key}")
+        row, n = store.acknowledge_row(key, user["name"])
+        said = (f"Acknowledged {n} High {'flag' if n == 1 else 'flags'} on {label(row)}." if n
+                else f"Nothing on {label(row)} was waiting for acknowledgment.")
+        return detail_response(request, row, user, announce=said)
+
+    @app.post("/row/{key}/note", response_class=HTMLResponse)
+    def add_note(request: Request, key: str, text: str = Form("")):
+        """A hand-off note for the next shift, without deciding anything."""
+        user = require_user(request)
+        if key not in store.rows:
+            raise HTTPException(404, f"No open row {key}")
+        text = text.strip()[:400]
+        if not text:
+            raise HTTPException(400, "Write the note first: what you checked, changed or are waiting on.")
+        row = store.add_note(key, user["name"], text)
+        return detail_response(request, row, user, announce=f"Note added to {label(row)} for the next shift.")
 
     @app.post("/flags/{flag_id}/decision", response_class=HTMLResponse)
     def decide(request: Request, flag_id: str, decision: str = Form(...), note: str = Form("")):
@@ -280,8 +314,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             raise HTTPException(404, f"No flag {flag_id}")
         if not is_htmx(request):
             return RedirectResponse(f"/row/{row.key}", status_code=303)
-        retag = decision == "accept" and flag_id.split("-", 1)[0] in config.CARRY_FORWARD_RULES
-        return detail_response(request, row, user, retag_now=retag)
+        rule = flag_id.split("-", 1)[0]
+        retag = decision == "accept" and rule in config.CARRY_FORWARD_RULES
+        said = f"{'Accepted' if decision == 'accept' else 'Rejected'} {rule} on {label(row)}."
+        return detail_response(request, row, user, retag_now=retag, announce=said)
 
     def require_approver(request: Request) -> dict:
         user = require_user(request)
@@ -322,7 +358,17 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.get("/briefing", response_class=HTMLResponse)
     def briefing(request: Request):
         user = require_user(request)
+        if not is_htmx(request):   # a fragment: opened on its own it would have no page around it
+            return RedirectResponse("/", status_code=303)
         return render(request, "_briefing.html", user=user, expanded=True)
+
+    @app.post("/briefing/read")
+    def briefing_read(request: Request, briefing_id: str = Form("")):
+        """Marked read per person, not per browser: on a shared workstation the next shift still
+        sees the briefing folded open for them."""
+        user = require_user(request)
+        store.briefing_read[user["name"]] = briefing_id[:80]
+        return Response(status_code=204)
 
     @app.post("/ask", response_class=HTMLResponse)
     def ask_html(request: Request, question: str = Form(...)):

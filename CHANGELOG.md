@@ -6,6 +6,24 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+### Changed (alignment with the client requirement brief and extracts)
+- **Valid demand only.** MIPS lines marked `Closed` are no longer counted as demand. They stay on
+  the position as `closed_lines` (workbook column "Closed Lines (excluded)"). On the event feed,
+  closing a line after its run was ordered reads as demand removed, not as inventory. Every line in
+  the 12 Sep 2026 extract is open, so its results do not change.
+- **R04 finds every kind of run move** named in scenario 3: to another line, another production day,
+  or another run slot on the same line. The flag names the kind of move (`moved_to_another`
+  evidence), and so does its accountability record.
+- **R09 uses the WMS report's own evidence of an order change** (scenario 6). When
+  `Original Ord Qty` ≠ `Order Qty` and MIPS still plans the original total, the flag lists the
+  changed customer orders and says the change never reached MIPS, with attribution *certain*. On
+  the client extract this applies to SKUs 76108, 950507 and 951008.
+- **R02's correction states the resulting requirement**, as in the client's example ("Apply the 1,200
+  units to the active sales-order lines… production requirement at 800 units"). It also has a
+  `requirement_after_inventory` evidence value.
+- **R19 is tagged "Returns & Adjustments"**, one of the client's challenge areas, instead of
+  "Warehouse Traceability".
+
 ### Added
 - **System accountability on every flag** (`recon_agent/accountability.py`). The rules now say
   which system misfired, not only that the systems disagree: the impact (over-production,

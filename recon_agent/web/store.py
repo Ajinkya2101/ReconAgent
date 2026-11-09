@@ -96,6 +96,10 @@ class Store:
     changes: list[Change] = field(default_factory=list)
     claims: dict[str, dict] = field(default_factory=dict)
     acks: dict[str, dict] = field(default_factory=dict)
+    # Hand-off notes per row ("checked WMS, waiting on the freezer count"), newest last. Like claims
+    # they live in memory: they are for the next shift, not a record of the decision.
+    notes: dict[str, list[dict]] = field(default_factory=dict)
+    briefing_read: dict[str, str] = field(default_factory=dict)   # user -> briefing id they marked read
     first_seen: dict[str, dt.datetime] = field(default_factory=dict)
     rows: dict[str, Row] = field(default_factory=dict)
     narration_state: str = "rules"   # rules | pending | ai | failed
@@ -324,6 +328,8 @@ class Store:
             feedback.save({"rules": {}, "decisions": {}})
             self.claims.clear()
             self.acks.clear()
+            self.notes.clear()
+            self.briefing_read.clear()
             self.first_seen.clear()
             self.rows = {}
             self.load()
@@ -371,6 +377,22 @@ class Store:
                  "dollars": self.res.kpis["dollar_exposure"] if d == self.sales_date else None}
                 for d, rs in sorted(by_day.items())]
 
+    def ranks(self) -> dict[str, int]:
+        """Each open row's place in the priority order of the whole open queue (1 = first).
+
+        Filters narrow the list but keep these numbers, so a gap in the ranks shows rows
+        filtered away rather than a reordering."""
+        return {r.key: i for i, r in enumerate(self.ordered_rows(), start=1)}
+
+    def multi_day(self) -> bool:
+        """More than one sales day has open work: only then does each row need its own day tag."""
+        return len(self.days()) > 1
+
+    def pending_acks(self, row: Row) -> list[Finding]:
+        """The row's High flags still waiting for acknowledgment, most urgent first."""
+        pending = [f for f in row.open_flags if self.ack_state(f)["state"] in ("due", "overdue")]
+        return sorted(pending, key=lambda f: self.first_seen[f.id])
+
     def carried_in(self) -> list[dict]:
         """Accepted carry-forward surplus, by the sales day it lands on (awaiting the MIPS correction)."""
         by_day: dict[dt.date, float] = {}
@@ -405,8 +427,8 @@ class Store:
 
     def row_ack_flag(self, row: Row) -> Finding | None:
         """The row's most urgent High flag still waiting for acknowledgment."""
-        pending = [f for f in row.open_flags if self.ack_state(f)["state"] in ("due", "overdue")]
-        return min(pending, key=lambda f: self.first_seen[f.id]) if pending else None
+        pending = self.pending_acks(row)
+        return pending[0] if pending else None
 
     def decision(self, f: Finding) -> dict | None:
         return self.decisions.get(f.id)
@@ -441,6 +463,25 @@ class Store:
             row, f = self.find(flag_id)
             self.acks[f.id] = {"user": user, "at": self.now()}
             self._bump(row.key, user)
+            return row
+
+    def acknowledge_row(self, key: str, user: str) -> tuple[Row, int]:
+        """Acknowledge every High flag on the row still waiting: one tap from an alert link."""
+        with self.lock:
+            row = self.rows[key]
+            pending = self.pending_acks(row)
+            for f in pending:
+                self.acks[f.id] = {"user": user, "at": self.now()}
+            if pending:
+                self._bump(row.key, user)
+            return row, len(pending)
+
+    def add_note(self, key: str, user: str, text: str) -> Row:
+        with self.lock:
+            row = self.rows[key]
+            self.notes.setdefault(key, []).append({"user": user, "at": self.now(), "text": text})
+            del self.notes[key][:-20]
+            self._bump(key, user)
             return row
 
     def decide(self, flag_id: str, decision: str, user: str, note: str = "") -> Row:

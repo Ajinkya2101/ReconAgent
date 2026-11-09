@@ -1,6 +1,7 @@
 {% from "_macros.html" import icon, tag %}
 <header class="strip">
   <a class="strip-mark" href="/">Exception worklist</a>
+  {# Freshness stays on screen at every width: the long form shrinks to tag and time, never to nothing. #}
   <p class="strip-asof">
     {% if store.feed.mode == "events" %}
     <span class="asof-mode"><span class="sim-badge" title="Synthetic data from the event simulator. No plant data.">Simulation</span><span class="asof-long">Live feed</span></span>
@@ -8,14 +9,16 @@
     <span class="asof-mode"><span class="asof-long">Daily extracts, not live</span><span class="asof-short">Not live</span></span>
     {% endif %}
     {% include "_asof.html" %}
+  </p>
+  <div class="strip-changes">
     {% set since = version %}{% set keys = [] %}{% set checked = store.loaded_at %}
     {% include "_changes.html" %}
-  </p>
+  </div>
   <nav class="strip-actions" aria-label="Account and assistant">
     {% include "_strip_claims.html" %}
     {% if store.feed.mode == "events" %}
     <form class="strip-reset" method="post" action="/simulation/reset" hx-post="/simulation/reset"
-          hx-confirm="Reset the simulation to the starting day? This clears every change, scenario, fault, decision, claim and acknowledgment, for everyone, and re-publishes the synthetic seed.">
+          hx-confirm="Reset the simulation to the starting day? This clears every change, scenario, fault, decision, claim, acknowledgment and shift note, for everyone, and re-publishes the synthetic seed.">
       <button class="btn btn--quiet" type="submit" title="Reset the simulation to the starting day">{{ icon("refresh") }}<span>Reset simulation</span></button>
     </form>
     {% endif %}

@@ -102,12 +102,12 @@ References in this document look like **`MIPS Order Lines` r6**, meaning sheet *
 | **R01** Inventory applied to first line only | 2+ MIPS lines and First-line risk > 0 | First-line risk | High at ≥ 1,000, else Medium |
 | **R02** Inventory netted without audit trail | Implied inventory > 0, Recorded inventory = 0, no R01 risk, no negative run | Implied inventory | Medium |
 | **R03** Blind line | a run with ordered = 0 and wrapped = 0 that is not a ghost (it has a shift) | 0 | Low |
-| **R04** Ghost of a moved run | a zero run with **no shift**, whose formula (ignoring a trailing "A") produced output on another line | 0 | Medium |
+| **R04** Ghost of a moved run | a zero run with **no shift**, whose formula (ignoring a trailing "A") produced output on another line, on another production day, or in another run slot on the same line (named in that order) | 0 | Medium |
 | **R05** Recovery run over-built | 2+ active runs and Over-build ≥ 100, where Over-build = the larger of (Recovery ordered − Still needed after run 1) and (Wrapped − Consolidated requirement) | Over-build | High at ≥ 1,000, else Medium |
 | **R06** Surplus not carried forward | exactly 1 active run, surplus (−Net requirement) ≥ 50, no negative run | surplus | Medium at ≥ 1,000, else Low |
 | **R07** Filled from untracked stock | Net requirement ≥ 20 and WMS allocated ≥ Sales-day demand | Net requirement | High at ≥ 500, else Medium |
 | **R08** Negative net order | any run with `NetUnitsOrdered` < 0 | −(sum of negative orders) | Medium |
-| **R09** MIPS vs WMS order mismatch | WMS ordered ≠ Sales-day demand | WMS ordered − Sales-day demand | Medium |
+| **R09** MIPS vs WMS order mismatch | WMS ordered ≠ Sales-day demand. When WMS `Original Ord Qty` ≠ `Order Qty` and MIPS still plans the original total, the order change never reached MIPS (attribution *certain*) | WMS ordered − Sales-day demand | Medium |
 | **R10** WMS allocation short | WMS allocated < WMS ordered | the shortfall | Medium |
 | **R11** Units-per-container conflict | MIPS `Units per Container` (most common on container `01` lines) ≠ WMS `Units per Container` | 0 | Medium |
 | **R12** Shipped without load scan | any `wms.order` with `Shipped Qty` > 0 and `Loaded Qty` = 0 | shipped units on those orders | High |

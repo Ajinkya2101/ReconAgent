@@ -106,9 +106,22 @@ Step 5: Explanations
 Each flag has an explanation text. The explanation can come from two sources:
 
 - Rule text. The rule writes the text. This text is always available.
-- AI explanation. An AI model (Gemini 2.5 Pro on OCI Generative AI) writes the text. It also gives a root cause and an owner.
+- AI explanation. An AI model (Gemini 2.5 Pro on OCI Generative AI) writes the text. It also gives a root cause and an owner, the chain of events (one system for each step), the business impact, the record that confirms the cause, and the linked flags.
 
 The label above each explanation tells you the source. If the AI model is not available, the agent uses the rule text. The agent continues to operate correctly without the AI model.
+
+System accountability
+Each flag also shows which system caused the problem. The rules calculate this, not the AI. Thus, it is always available, and the AI cannot change it.
+- Impact: over-production, under-production, stranded surplus, short shipment, overstated inventory, traceability gap, financial posting gap or data integrity.
+- Started in: the system where the error started (MIPS, ODI, WMS or Oracle), or Integration when the connection between two systems failed.
+- Failure: how the system went wrong (for example, planning change, stale data, missing transaction).
+- Attribution: Certain, Likely or Undetermined.
+- One line for each system (MIPS, ODI, WMS, and Oracle if it is involved) with its role: Misfired, Affected, Reference, Conflicting, To check or Not involved.
+
+AI checks and audit
+- The agent compares each number in the AI text with the numbers of the rules. If the AI writes a number that the rules did not calculate, the flag shows "not in the engine's data". Do not use that number.
+- Each AI explanation, briefing and assistant answer shows an Audit number. The audit log (ai_audit.jsonl) keeps the data that the AI received, the answer of the AI and the result of the checks.
+- If the agent cannot write the audit log, it does not show the AI text. It shows the rule text.
 
 ---------------------------------------------------------------
 
@@ -128,6 +141,7 @@ NOTE: The agent puts your name on each claim, acknowledgment and decision. Use y
 - To see all of the briefing, push Read briefing.
 - Read the briefing text and the Top actions list.
 - To open the SKU of an action, push the SKU number at the start of that action.
+- Read Where today's flags started. It shows the flags, High flags, units and dollars for each system that caused them.
 - When you complete the briefing, push Mark read.
 - Result: The briefing closes. It stays closed on this computer until the agent loads new data.
 
@@ -177,6 +191,8 @@ Result: The detail area shows the row.
 	- The units and the dollar value.
 	- The explanation (rule text or AI explanation).
 	- The owner and the root cause (or scenario).
+	- The system accountability: the impact, the system where the problem started, and the role of each system. Refer to Step 5.
+	- For an AI explanation: How it happened, Confirm with, the check of the numbers and the Audit number.
 	- The evidence values.
 - To see the original records, push Source records.
 Result: The screen shows the MIPS schedule lines, the ODI production runs and the WMS customer orders for this SKU.
@@ -239,7 +255,7 @@ Result: The answer shows below the box. The answer gives links to the related ro
 - To open a row from the answer, push the link.
 - To close the assistant, push the X button or push Esc.
 
-NOTE: If the AI model is connected, the AI writes the answer. It gets all numbers from the agent data. If the AI model is not connected, the assistant shows the agent data for the SKU numbers or the item names in your question.
+NOTE: If the AI model is connected, the AI writes the answer. It gets all numbers from the agent data. The answer shows an Audit number and a check of its numbers against the data that the assistant looked up. If the AI model is not connected, the assistant shows the agent data for the SKU numbers or the item names in your question.
 
 10 - Sign out
 Push the sign-out button next to your name in the top strip.

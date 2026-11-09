@@ -5,8 +5,9 @@
                                  - Completed production
                                  + Valid returns / adjustments
 
-Demand comes from every MIPS schedule line for the SKU (sales orders *and*
-supply-planning lines, including lines moved to another sales day), so
+Demand comes from every open MIPS schedule line for the SKU (sales orders *and*
+supply-planning lines, including lines moved to another sales day; lines marked
+Closed are not valid demand and are kept aside on the position), so
 inventory is consolidated at SKU level instead of being applied to the first
 matching line only.
 
@@ -36,6 +37,7 @@ class SkuPosition:
     wms: WmsItem | None = None
     returns: float = 0.0   # units WMS returned to the plant (event feed only): wrapped but not usable
     demand_basis: float | None = None   # event feed: demand when the first run was last ordered
+    closed_lines: list[MipsLine] = field(default_factory=list)   # MIPS lines marked Closed: not valid demand
 
     # --- MIPS demand -----------------------------------------------------
     @property
@@ -147,6 +149,7 @@ class SkuPosition:
             "SKU": self.sku,
             "Description": self.description,
             "MIPS Lines": len(self.lines),
+            "Closed Lines (excluded)": len(self.closed_lines),
             "Demand Total": self.demand_total,
             "Demand Sales Date": self.demand_current,
             "Demand Moved": self.demand_moved,
@@ -198,9 +201,11 @@ def propose_allocation(p: SkuPosition) -> list[dict]:
 
 
 def build_positions(src: SourceData) -> dict[str, SkuPosition]:
+    # Valid demand only: a closed MIPS line is kept on the position for the record but never counted.
     lines_by_sku: dict[str, list[MipsLine]] = defaultdict(list)
+    closed_by_sku: dict[str, list[MipsLine]] = defaultdict(list)
     for l in src.mips:
-        lines_by_sku[l.sku].append(l)
+        (closed_by_sku if l.closed else lines_by_sku)[l.sku].append(l)
     runs_by_sku: dict[str, list[FgRun]] = defaultdict(list)
     for r in sorted(src.fg_runs, key=lambda r: (r.start is None, r.start)):
         runs_by_sku[r.sku].append(r)
@@ -228,5 +233,6 @@ def build_positions(src: SourceData) -> dict[str, SkuPosition]:
         price = next((l.retail_price for l in lines if l.retail_price), config.DEFAULT_UNIT_PRICE)
         positions[sku] = SkuPosition(sku=sku, description=desc, unit_price=price,
                                      lines=lines, runs=runs, wms=wms, returns=returns.get(sku, 0.0),
-                                     demand_basis=src.demand_at_order.get(sku))
+                                     demand_basis=src.demand_at_order.get(sku),
+                                     closed_lines=closed_by_sku.get(sku, []))
     return positions

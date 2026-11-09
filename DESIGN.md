@@ -12,6 +12,7 @@ colors:
   ink-3: "#5c636b"
   rule: "#d3d7db"
   rule-2: "#b3b9bf"
+  control: "#767c83"
   inventory-grey: "#8e959c"
   tag-mon: "#1f5fbf"
   tag-tue: "#23803a"
@@ -211,6 +212,13 @@ components:
     textColor: "{colors.ink}"
     padding: "0 24px"
     height: "52px"
+  ack-bar:
+    backgroundColor: "{colors.raised}"
+    textColor: "{colors.ink}"
+    padding: "10px 24px"
+  ack-bar-overdue:
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.raised}"
   queue-row-current:
     backgroundColor: "{colors.raised}"
     padding: "12px 24px"
@@ -222,7 +230,7 @@ components:
 
 **Creative North Star: "The Tagged Rack"**
 
-The worklist is a rack of bagged bread on a plant floor. Everything is bag-film white and printed ink; the only saturated thing in sight is the plastic closure tag that says which sales day a loaf belongs to. Each queue row wears its sales day's tag, the day strip is a row of tags with their counts and dollars, and when a planner accepts a carry-forward the surplus on the demand track visibly re-tags into the next sales day's colour. Colour therefore always means "which day", never "how bad" and never "brand".
+The worklist is a rack of bagged bread on a plant floor. Everything is bag-film white and printed ink; the only saturated thing in sight is the plastic closure tag that says which sales day a loaf belongs to. The day is the shelf: with one open sales day, its tag labels the whole queue once; rows wear their own tag only when several days are open or product is out of place (surplus carried to the next day). When a planner accepts a carry-forward the surplus on the demand track visibly re-tags into the next sales day's colour, and pointing at that Accept previews the re-tag before anyone commits. Colour therefore always means "which day", never "how bad" and never "brand".
 
 Density is Operate-mode: a strict two-column grid (queue 7 / detail 5) of hairline-ruled rows, tabular figures everywhere, and hierarchy carried by type scale and weight alone. Money is the largest thing on any row because money at risk sets the order. Severity is an ink label (filled, outlined, plain) with a three-bar meter, readable in greyscale and on an overnight shift.
 
@@ -251,6 +259,8 @@ These values are a provisional placeholder mapping. They are **not** Lehigh Vall
 
 The tag colours appear in exactly three places: the tag itself, the surplus/carry-forward segment on the demand track, and the favicon (a Saturday tag).
 
+When only one sales day has open work, its tag appears once as the queue's shelf label and the rows go untagged; a column of identical tags carries no information and would be the loudest thing on screen.
+
 ### Neutral
 - **Bag-Film Ground** (#eff1f3): Page ground, top strip ground.
 - **Panel Film** (#f6f7f9): The detail column and the assistant's question field; one step lighter than the ground to separate the reading pane.
@@ -259,7 +269,8 @@ The tag colours appear in exactly three places: the tag itself, the surplus/carr
 - **Ink 2** (#3f454c): Secondary text, the shared-scale system bars, outlines of Medium severity.
 - **Ink 3** (#5c636b): Tertiary text: captions, provenance, units, decided money, placeholders.
 - **Rule** (#d3d7db): Row hairlines, ledger dividers, evidence grid, the shortfall hatch.
-- **Rule 2** (#b3b9bf): Stronger hairlines: the detail column edge, input borders, unselected outlines, empty meter bars, scrollbar thumbs.
+- **Rule 2** (#b3b9bf): Stronger hairlines: the detail column edge, unselected outlines, empty meter bars, scrollbar thumbs.
+- **Control Edge** (#767c83): The edge of anything you type into or that rejects (inputs, text areas, the Reject button, key caps). At least 3:1 on both the ground and white (WCAG 1.4.11).
 - **Inventory Grey** (#8e959c): The inventory-applied segment of the demand track and its legend key.
 
 ### Named Rules
@@ -267,7 +278,7 @@ The tag colours appear in exactly three places: the tag itself, the surplus/carr
 
 **The Ink Severity Rule.** Severity is always ink: High is an ink fill with three white bars, Medium is a 1px ink outline with two ink bars, Low is plain text with one bar. It never takes a tag colour, a red, or any hue.
 
-**The Hatch Is State Rule.** Hatching encodes inventory state, never decoration. A 135° stripe of the current sales day's colour over white marks surplus not yet carried forward; a 90° rule-grey hatch inside an ink outline marks a production shortfall. Once surplus is re-tagged, the hatch is replaced by the next day's flat fill.
+**The Flat Surplus Rule.** Surplus not yet carried forward is a flat fill of the current sales day's colour inside a 1px ink outline: the product still wears today's tag. Once accepted it re-tags to the next day's flat fill. Never stripe a tag colour: yellow and ink at 45° reads as caution tape, which is severity by colour. The only hatch left is the 90° rule-grey hatch inside an ink outline for a production shortfall.
 
 ## Typography
 
@@ -301,13 +312,15 @@ The tag colours appear in exactly three places: the tag itself, the surplus/carr
 
 One grid. On desktop (1100px and up) the page is a sticky 52px top strip over two columns: the queue at 7fr and the detail at 5fr. The detail column is sticky beneath the strip, scrolls independently, and sits on Panel Film behind a Rule 2 hairline. The page gutter is 24px (16px under 720px).
 
-Queue rows are a three-area grid: a 104px tag column, then SKU and item over the rule title and counts, then money over chips at the right. Rows bleed to the gutter edge so the hover and current fills run full width. When a SKU is open on desktop, the other rows quiet to a single line (tag, ID, severity, chips, compact money); severity and acknowledgment deadlines stay visible.
+Queue rows are a two-area grid: rank, SKU and item over the rule title and counts, then money over chips at the right. A 104px tag column joins on the left only when several sales days are open. The rank is the row's place in the whole open queue, so a filter leaves gaps rather than renumbering. A header over the queue names the money column ("Largest flag $") because rows sort by priority, not by dollars. Rows bleed to the gutter edge so the hover and current fills run full width. When a SKU is open on desktop, the other rows quiet to a single line (ID, severity, chips, compact money); severity and acknowledgment deadlines stay visible.
 
-The day strip wraps and never scrolls a sales day off-screen. On phone every day face takes a full row.
+The day strip wraps and never scrolls a sales day off-screen. With one open day it becomes a static shelf label (tag, dollars, rows and flags) instead of a filter with one choice. On phone every day face takes a full row.
 
-Between 720 and 1099px the layout collapses to one column and the detail becomes a slide-over sheet (up to 640px wide) with a Back button. Under 720px the strip drops names and secondary status, the toolbar stacks, rows reflow to tag-and-money over ID over second line, and the detail header stacks money under the title.
+The SKU detail leads with the action. In order: the header (tag, SKU, money, claim); the acknowledge bar when High flags are waiting; shift notes; the demand track; each flag with its explanation, where it started, the proposed correction and the decision; then "How the engine got here" (the ledger equation and the shared-scale system table) and the source records. The ledger is the engine's working, not the first thing a supervisor must read past.
 
-Spacing rhythm is 4 / 8 / 12 / 16 / 20 / 24, with 28px before detail sections and a 64px tail at the end of each column. Touch targets grow to 44px (40px small) on coarse pointers.
+Between 720 and 1099px the layout collapses to one column and the detail becomes a slide-over sheet (up to 640px wide) with a Back button. The as-of line keeps its tag and time (the long wording drops) and the strip's actions go to icons with their names kept for screen readers. Under 720px the strip becomes two rows (88px): the title and account on top, the mode, tag and time beneath, so freshness is visible at every width and nothing scrolls sideways. The toolbar stacks, rows reflow to ID and money over the second line, and the detail header stacks money under the title. On phone the detail ends in a sticky dock at the thumb: Back to the queue and, while High flags wait, the acknowledge bar.
+
+Spacing rhythm is 4 / 8 / 12 / 16 / 20 / 24, with 28px before detail sections and a 64px tail at the end of each column. On coarse pointers every control grows to 44px: buttons, view tabs, search, disclosure summaries and the strip title.
 
 ## Elevation & Depth
 
@@ -316,6 +329,7 @@ The system is flat. Depth inside the page is tonal (ground, panel, raised white)
 ### Shadow Vocabulary
 - **Sheet** (`box-shadow: -16px 0 40px rgba(22, 25, 29, 0.14)`): The assistant drawer and the tablet/phone detail sheet, both with a 1px ink left edge.
 - **Toast** (`box-shadow: 0 8px 24px rgba(22, 25, 29, 0.25)`): The inline error toast, an ink fill floating bottom-centre.
+- **Popover** (`box-shadow: 0 16px 40px rgba(22, 25, 29, 0.18)`): The keyboard shortcut list, centred over a faint ink backdrop.
 
 ### Named Rules
 **The Only Floating Things Cast Shadows Rule.** A shadow means "this slid in over the page". Rows, day faces, notices and panels in the flow stay flat.
@@ -335,9 +349,10 @@ Outlined ink, deliberate, nearly square.
 - **Shape:** Gently squared (4px), 36px tall (30px small), 14px side padding, 600 weight.
 - **Default:** Transparent with a 1px ink border; hover fills Hover Film; active nudges down 1px.
 - **Primary:** Ink fill, white text; hover Ink Hover. Used for the decisive action (Accept, Send, Sign in).
-- **Reject:** Rule 2 border with Ink 2 text, hover returns to ink on white. It always sits apart from Accept (pushed to the far end of the action row).
+- **Reject:** Control Edge border with Ink 2 text, hover returns to ink on white. It always sits apart from Accept (pushed to the far end of the action row).
+- **Accept before acknowledgment:** While a High flag waits for acknowledgment, Accept drops to the default outline and the acknowledge bar holds the only ink-filled button. Acknowledging is the primary act until it is done.
 - **Quiet:** No border; used in the top strip (Ask, sign out, my claims).
-- **Focus:** 2px ink outline, 2px offset, everywhere.
+- **Focus:** 2px ink outline, 2px offset, everywhere; white on ink fills (overdue notices and bars). Opening a SKU moves focus to its heading; after a decision, focus returns to that flag's heading.
 - **Busy / disabled:** 0.55 opacity with a progress cursor while htmx is in flight.
 
 ### Day-Code Tag (signature)
@@ -349,38 +364,52 @@ Uppercase 12px label with a three-bar meter (3 × 11px bars, 2px apart). High: i
 ### Chips
 - **Acknowledge due:** 20px, 1px ink inset outline, clock icon, "Ack by 16:12".
 - **Acknowledge overdue:** ink fill, white text, minutes overdue.
-- **Claimed:** white with a Rule 2 outline and Ink 2 text.
+- **Claimed:** white with a Rule 2 outline and Ink 2 text; initials on screen, the full name for screen readers.
+- **Carried:** the same white chip with the arrow icon and the next day's small tag, for rows whose surplus was carried forward.
+- **Shift notes:** the same white chip with the note icon and a count.
 
-### Day Strip
-A wrapping row of day faces: a tag (or "All open days"), dollars in Figure M and a caption of rows and flags. Faces are outlined in Rule 2 (52px minimum height); hover fills Hover Film; selected becomes white with a 2px inset ink outline.
+### Day Strip and Shelf
+With several open days, a wrapping row of day faces: a tag (or "All open days"), dollars in Figure M and a caption ("retail $ at risk · rows · open flags"). Faces are outlined in Rule 2 (52px minimum height); hover fills Hover Film; selected becomes white with a 2px inset ink outline. With one open day, the same tag, dollars and caption sit unboxed as the shelf label.
 
 ### Queue Row
-Hairline-separated, full-bleed hover in Hover Film, the current row raised to white with a Rule 2 inset outline. Decided rows drop their money and title to Ink 3. A carry-forward line under the tag shows the arrow icon and the next day's tag.
+Hairline-separated, full-bleed hover in Hover Film, the current row raised to white with a Rule 2 inset outline and `aria-current`. A small mono rank in Ink 3 leads the SKU. Rows with no retail value show an em dash in the money slot, never "no $". Plant-level rows read "Plant-wide" in the sans, not a mono code. Decided rows drop their money and title to Ink 3.
 
-### Ledger Equation and Demand Track
-The detail opens on the reconciled position as a ruled equation: an operator column (−, +, =), a label with a caption source, right-aligned figures, and a 2px ink rule above the total. Below it, a 30px demand track on one shared scale: Inventory Grey, ink for wrapped production, a 2px ink demand marker extending past the bar, then either a hatched surplus segment in the current day's colour or a hatched shortfall. On re-tag, the next day's flat fill wipes left-to-right over the surplus (clip-path, 220ms, ease `cubic-bezier(0.16, 1, 0.3, 1)`) and the carry line wipes in with it. A shared-scale table of system bars (8px Ink 2 bars with a 1.5px ink demand mark) follows.
+### Demand Track (signature)
+Under "Supply against demand", a 30px track on one shared scale: Inventory Grey, ink for wrapped production, a 2px ink demand marker extending past the bar, then either a flat surplus segment in the current day's colour or a hatched shortfall. On re-tag, the next day's flat fill wipes left-to-right over the surplus (clip-path, 220ms, ease `cubic-bezier(0.16, 1, 0.3, 1)`) and the carry line wipes in with it. Hovering or focusing an Accept that carries surplus previews the same wipe with a dashed ink edge; the hint beside that Accept names the move ("Carries 4,708 units SAT → MON, corrected in MIPS").
+
+### Ledger Equation
+"How the engine got here", after the flags: a ruled equation with an operator column (−, +, =), a label with a caption source, right-aligned figures and a 2px ink rule above the total, then a shared-scale table of system bars (8px Ink 2 bars with a 1.5px ink demand mark).
 
 ### Inputs / Fields
-- **Style:** White, 1px Rule 2 border, 4px radius; search 34px tall with a leading search icon and a `/` key hint; sign-in fields 44px at 17px text.
+- **Style:** White, 1px Control Edge border, 4px radius; search 34px tall (44px on touch) with a leading search icon and a `/` key hint; sign-in fields 44px at 17px text.
 - **Focus:** Border turns ink plus a 2px ink outline inset by 1px.
 - **Selectable options (roles):** 40px outlined segments; selected becomes an ink fill.
 
 ### Navigation
-- **Top strip:** Sticky, 52px, ground fill, 1px ink bottom rule. Strip title ("Exception worklist") in 17px/700, then the as-of line (mode in 650 behind a Rule 2 divider, a small tag for the loaded sales day, loaded and checked times), then claims count, Ask, and the user's initials disc.
+- **Top strip:** Sticky, 52px (88px in two rows on phone), ground fill, 1px ink bottom rule. Strip title ("Exception worklist") in 17px/700, then the as-of line (mode in 650 behind a Rule 2 divider, a small tag for the loaded sales day, loaded time), then the changes pill and checked time outside the clipped as-of line, then claims count, Ask, and the user's initials disc.
+- **Skip links:** "Skip to SKU detail" and "Skip to the queue", ink-filled, shown only on keyboard focus.
+- **Keyboard:** `j`/`k` move through rows, Enter opens, `h` acknowledges, `c` claims, `a`/`r` move to Accept or Reject (Enter records it, so a decision is never one stray key), `/` searches, `?` lists the shortcuts, Esc closes.
 - **View tabs:** 32px, 13px/600 Ink 2 labels with a 12px count; hover Hover Film; selected is an ink fill with white text.
 
+### Acknowledge Bar
+While any High flag on the SKU waits, a bar pinned to the top of the detail as it scrolls: clock icon, "2 High flags · acknowledge by 17:17, 14 min left", and one ink-filled "Acknowledge all 2". White with a 1px ink rule beneath while due; an ink fill with a white button once overdue. On phone it moves into the bottom dock.
+
 ### Flags and Notices
-Each flag is a ruled block: severity and rule code, a 17px title, quantities, the explanation with its provenance caption, a bordered evidence grid (150px minimum cells), then acknowledgment and decision. Notices are inset-outlined boxes on white with 2px corners: due acknowledgment is outlined in ink, overdue is an ink fill with white controls.
+Each flag is a ruled block, action first: severity and rule code, a 17px title, quantities, the explanation with its provenance caption ("From the rules" or "AI explanation · model"), one caption line saying where it started, the proposed write-back, then the decision. Under the decision sit two disclosures: "Add a note to this decision" and "Evidence and what each system did" (accountability table, AI analysis and the bordered evidence grid). The AI figure check stays in view under the flag. Notices are inset-outlined boxes on white with 2px corners: due acknowledgment is outlined in ink, overdue is an ink fill with white controls.
+
+### Shift Notes
+A hand-off note needs no decision: "Leave a note for the next shift, without deciding" sits under the flags. Notes list newest first above the demand track (name, time, text, hairline between), and the row carries a note chip.
 
 ### Icons
-An authored stroke sprite (24px grid, 1.75 stroke, round caps and joins, drawn at 18px; 13–14px in chips and captions) in currentColor: search, chat, check, x, back, clock, claim, refresh, sign out, down, arrow.
+An authored stroke sprite (24px grid, 1.75 stroke, round caps and joins, drawn at 18px; 13–14px in chips and captions) in currentColor: search, chat, check, x, back, clock, claim, refresh, sign out, down, arrow, note, keys.
 
 ## Do's and Don'ts
 
 ### Do:
 - **Do** use a tag colour only to name a sales day, on the tag or on that day's surplus segment.
 - **Do** show severity as an ink label plus the three-bar meter (filled / outlined / plain).
-- **Do** use hatching only to encode state: un-carried surplus in the current day's colour, shortfall in rule grey.
+- **Do** draw un-carried surplus as a flat fill of the current day's colour; keep hatching for the rule-grey shortfall only.
+- **Do** put the decision before the working: correction and Accept/Reject above the ledger, the acknowledge bar above everything while it waits.
 - **Do** make money the largest figure in its container and set every number in tabular figures.
 - **Do** set SKU, run and rule codes in the monospace.
 - **Do** separate content with hairlines (Rule, Rule 2) and close bands with a 1px ink line.
@@ -394,3 +423,5 @@ An authored stroke sprite (24px grid, 1.75 stroke, round caps and joins, drawn a
 - **Don't** add drop shadows to rows, day faces, notices or in-flow panels; shadows are for sheets and toasts that slide over the page.
 - **Don't** add company branding (ACSE, Bimbo, Oracle) to the interface.
 - **Don't** let the day strip scroll a sales day out of view; it wraps.
+- **Don't** repeat the same day tag on every row when only one day is open; label the shelf once.
+- **Don't** hide freshness on any width: the as-of tag and time always show.

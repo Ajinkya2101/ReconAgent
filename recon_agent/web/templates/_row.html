@@ -1,11 +1,15 @@
-{% from "_macros.html" import icon, tag, severity, money_or_dash, ack_chip %}
+{% from "_macros.html" import icon, tag, severity, money_or_dash, ack_chip, sku_label %}
 {% set top = row.top %}
 {% set n_open = row.open_flags|length %}
-<li id="row-{{ row.key }}" class="row{% if row.key == open_key or (selected and selected.key == row.key) %} is-current{% endif %}{% if not row.is_open %} is-decided{% endif %}"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>
-  <a class="row-link" href="/row/{{ row.key }}" hx-get="/row/{{ row.key }}" hx-target="#detail" hx-push-url="true" data-open-row="{{ row.key }}">
-    <span class="row-tag">{{ tag(row.sales_date) }}{% if row.carry_accepted %}<span class="row-carry">{{ icon("arrow") }}{{ tag(next_sales_day(row.sales_date), "tag--xs") }}</span>{% endif %}</span>
+{% if ranks is not defined %}{% set ranks = store.ranks() %}{% endif %}
+{% if show_tags is not defined %}{% set show_tags = store.multi_day() %}{% endif %}
+{% set current = row.key == open_key or (selected and selected.key == row.key) %}
+{% set notes = store.notes.get(row.key, []) %}
+<li id="row-{{ row.key }}" class="row{% if current %} is-current{% endif %}{% if not row.is_open %} is-decided{% endif %}"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>
+  <a class="row-link" href="/row/{{ row.key }}" hx-get="/row/{{ row.key }}" hx-target="#detail" hx-push-url="true" data-open-row="{{ row.key }}"{% if current %} aria-current="true"{% endif %}>
     <span class="row-id">
-      <span class="code">{{ row.sku or "PLANT" }}</span>
+      {% if ranks.get(row.key) %}<span class="row-rank" title="Rank {{ ranks[row.key] }} of the open queue"><span class="sr">Rank </span>{{ ranks[row.key] }}</span>{% endif %}
+      {{ sku_label(row) }}
       <span class="row-item">{{ row.description }}</span>
     </span>
     <span class="row-money">{{ money_or_dash(row.dollars) }}</span>
@@ -13,12 +17,15 @@
       {{ severity(row.severity) }}
       <span class="row-title">{{ top.title }}</span>
       <span class="row-units">{{ top.units|abs|num }} units</span>
-      {% if n_open > 1 %}<span class="row-more">+{{ n_open - 1 }} more</span>{% endif %}
+      {% if n_open > 1 %}<span class="row-more" title="{% for f in row.open_flags[1:] %}{{ f.rule }} {{ f.title }}{% if not loop.last %}; {% endif %}{% endfor %}">+{{ n_open - 1 }} more {{ "flag" if n_open == 2 else "flags" }}</span>{% endif %}
       {% if not row.is_open %}<span class="row-state">{{ row.flags|length }} decided</span>{% endif %}
     </span>
     <span class="row-chips">
       {%- set ack_flag = store.row_ack_flag(row) %}{% if ack_flag %}{{ ack_chip(ack_flag) }}{% endif -%}
-      {%- if row.claim %}<span class="chip chip--claim" title="Claimed by {{ row.claim.user }} at {{ row.claim.at|hm }}">{{ icon("claim") }}{{ row.claim.user|initials }}</span>{% endif -%}
+      {%- if row.carry_accepted %}<span class="chip chip--carry" title="Surplus carried to the next sales day, awaiting the MIPS correction">{{ icon("arrow") }}{{ tag(next_sales_day(row.sales_date), "tag--xs") }}</span>{% endif -%}
+      {%- if notes %}<span class="chip chip--note" title="Latest: {{ notes[-1].user }} at {{ notes[-1].at|hm }}">{{ icon("note") }}{{ notes|length }}<span class="sr"> shift {{ "note" if notes|length == 1 else "notes" }}</span></span>{% endif -%}
+      {%- if row.claim %}<span class="chip chip--claim" title="Claimed by {{ row.claim.user }} at {{ row.claim.at|hm }}">{{ icon("claim") }}<span aria-hidden="true">{{ row.claim.user|initials }}</span><span class="sr">Claimed by {{ row.claim.user }}</span></span>{% endif -%}
     </span>
+    {% if show_tags %}<span class="row-tag">{{ tag(row.sales_date) }}</span>{% endif %}
   </a>
 </li>
