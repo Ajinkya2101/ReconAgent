@@ -96,13 +96,7 @@
     } else {
       const target = (refocus && document.getElementById(refocus)) || $("#detail-h");
       target?.focus({ preventScroll: true });
-      // An accepted carry re-tags the surplus on the track at the top of the detail. When the flag
-      // sits further down, bring the track into view so the move is seen, not missed.
-      const track = $(".retag-now", e.detail.target) && $(".track", e.detail.target);
-      if (track) {
-        const box = track.getBoundingClientRect(), pane = e.detail.target.getBoundingClientRect();
-        if (box.top < pane.top || box.bottom > pane.bottom) track.scrollIntoView({ block: "center" });
-      } else target?.scrollIntoView({ block: "nearest" });
+      target?.scrollIntoView({ block: "nearest" });
     }
     refocus = null;
   });

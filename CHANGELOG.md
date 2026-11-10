@@ -6,6 +6,12 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+### Removed: the last of the v2 carry-forward
+- The v3 data model keeps all surplus in WMS, so no rule carries units to the next sales day. The empty
+  `CARRY_FORWARD_RULES` and `SALES_WEEKDAYS` settings and everything that read them are gone: the
+  "carried in" day card, the carry chip, hint and line, the re-tag animation, and `next_day` in the
+  `/api/positions` ledger. The codebase now has one data schema.
+
 ### Added: the worklist tells the truth about progress and hand-off
 - **Decisions move the money.** Each sales day shows what is still at risk (each SKU's largest open flag)
   and what has been accepted and decided so far; a decision updates the shelf at once. The Decided tab

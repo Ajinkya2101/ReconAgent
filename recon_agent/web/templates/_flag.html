@@ -13,8 +13,6 @@
 {#- While any High flag on this SKU waits, acknowledging is the one primary act: every Accept and
     Approve on the SKU steps back to an outline, not only the High flag's own. -#}
 {% set row_waiting = store.pending_acks(row)|length > 0 %}
-{% set carry_L = ledger(row) if f.rule in config.CARRY_FORWARD_RULES else none %}
-{% set carries = carry_L and carry_L.surplus %}
 <section class="flag{% if f.status != 'Open' %} is-decided{% endif %}" aria-labelledby="{{ hid }}">
   <header class="flag-head">
     {{ severity(f.severity) }}
@@ -50,20 +48,16 @@
     <p class="decide-warn">{{ row.claim.user }} claimed this {{ "SKU" if row.sku else "row" }} at {{ row.claim.at|hm }}. Deciding here records your name, not theirs.</p>
     {% endif %}
     <div class="decide-actions">
-      <button class="btn{% if not row_waiting %} btn--primary{% endif %}" name="decision" value="accept" aria-describedby="{{ hid }}-hint" data-accept{% if carries %} data-carry-accept{% endif %}>{{ icon("check") }}Accept</button>
+      <button class="btn{% if not row_waiting %} btn--primary{% endif %}" name="decision" value="accept" aria-describedby="{{ hid }}-hint" data-accept>{{ icon("check") }}Accept</button>
       <button class="btn btn--reject" name="decision" value="reject" data-reject>{{ icon("x") }}Reject</button>
     </div>
     <p class="decide-hint" id="{{ hid }}-hint">
       {%- if row_waiting %}<b>Acknowledge the High {{ "flag" if store.pending_acks(row)|length == 1 else "flags" }} first.</b> {% endif -%}
-      {%- if carries -%}
-        Carries {{ f.units|units }} {{ tag(row.sales_date, "tag--xs") }} {{ icon("arrow") }} {{ tag(carry_L.next_day, "tag--xs") }}, corrected in MIPS
-        {%- else -%}
-        {%- set prop = store.proposal(f) -%}
+      {%- set prop = store.proposal(f) -%}
         {%- set fix = prop.system if prop else (f.systems[0] if f.systems else "") -%}
         Agree, and correct it in {{ fix or "the source system" }}
         {%- if acc and acc.origin not in ("Undetermined", fix) -%}
         {%- if acc.origin == "Integration" and acc.handoff %}; it started at the {{ acc.handoff }} hand-off{% else %}; it started in {{ acc.origin }}{% endif -%}
-        {%- endif -%}
         {%- endif -%}
     </p>
     <details class="decide-note">
@@ -76,7 +70,6 @@
   <div class="decided">
     <p><b>{{ "Accepted" if f.status == ACCEPTED else "Rejected" }}</b>{% if d %} by {{ d.by or "someone" }}{% if d_at %} at {{ d_at.at|hm }}{% elif d.at %} at {{ d.at[11:16] }}{% endif %}{% endif %}
       · {{ "awaiting correction in the source system; closes when the feed shows it" if f.status == ACCEPTED else "rule confidence lowered; hidden next run while the quantity is unchanged" }}</p>
-    {% if f.status == ACCEPTED and carry_L %}<p class="carry-line{% if retag_now %} retag-now{% endif %}">Carry {{ f.units|units }} {{ tag(row.sales_date, "tag--xs") }} {{ icon("arrow") }} <span class="carry-to">{{ tag(carry_L.next_day, "tag--xs") }}</span> next sales day</p>{% endif %}
     {% if moved and moved.flag == f.id %}<p class="rank-move">{{ moved.said }}</p>{% endif %}
     {% if d and d.note %}<p class="decided-note">“{{ d.note }}”</p>{% endif %}
     <details class="change">

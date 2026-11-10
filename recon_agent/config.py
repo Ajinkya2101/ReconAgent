@@ -41,9 +41,6 @@ DAY_CODES = {
     5: ("SAT", "#f2c230", "#16191d"),
     6: ("SUN", "#6a46a8", "#ffffff"),
 }
-SALES_WEEKDAYS = (0, 1, 2, 3, 4, 5)   # unconfirmed; drives "next sales day" on the worklist
-# Surplus stays in WMS (all on-hand stock is kept there), so no rule carries units forward any more.
-CARRY_FORWARD_RULES: tuple[str, ...] = ()
 HIGH_ACK_MINUTES = 15
 WEB_POLL_SECONDS = 20        # fallback poll; open screens normally hear of changes by server push
 WEB_WATCH_SECONDS = 0.5 if SOURCE_MODE == "events" else 2.0   # how often the server checks the feed

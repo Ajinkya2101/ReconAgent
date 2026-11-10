@@ -29,7 +29,6 @@
     <span class="row-chips">
       {%- set ack_flag = store.row_ack_flag(row) %}{% if ack_flag %}{{ ack_chip(ack_flag) }}{% endif -%}
       {%- if acked %}{% set a = store.acks[acked[0].id] %}<span class="chip chip--acked" title="Acknowledged by {{ a.user }} at {{ a.at|hm }}, not decided yet">{{ icon("check") }}<span aria-hidden="true">{{ a.user|initials }}</span><span class="sr">Acknowledged by {{ a.user }}, not decided yet</span></span>{% endif -%}
-      {%- if row.carry_accepted %}<span class="chip chip--carry" title="Surplus carried to the next sales day, awaiting the MIPS correction">{{ icon("arrow") }}{{ tag(next_sales_day(row.sales_date), "tag--xs") }}</span>{% endif -%}
       {%- if notes %}<span class="chip chip--note" title="Latest: {{ notes[-1].user }} at {{ notes[-1].at|hm }}">{{ icon("note") }}{{ notes|length }}<span class="sr"> shift {{ "note" if notes|length == 1 else "notes" }}</span></span>{% endif -%}
       {%- if row.claim %}<span class="chip chip--claim" title="Claimed by {{ row.claim.user }} at {{ row.claim.at|hm }}">{{ icon("claim") }}<span aria-hidden="true">{{ row.claim.user|initials }}</span><span class="sr">Claimed by {{ row.claim.user }}</span></span>{% endif -%}
     </span>

@@ -43,13 +43,6 @@ def fingerprint(row: "Row") -> str:
     return json.dumps([flags, repr(row.position)], sort_keys=True, default=str)
 
 
-def next_sales_day(d: dt.date) -> dt.date:
-    d += dt.timedelta(days=1)
-    while d.weekday() not in config.SALES_WEEKDAYS:
-        d += dt.timedelta(days=1)
-    return d
-
-
 @dataclass
 class Row:
     key: str
@@ -105,10 +98,6 @@ class Row:
     def severity(self) -> str:
         pool = self.open_flags or self.flags
         return max(pool, key=lambda f: SEVERITY_RANK[f.severity]).severity
-
-    @property
-    def carry_accepted(self) -> bool:
-        return any(f.rule in config.CARRY_FORWARD_RULES and f.status == ACCEPTED for f in self.flags)
 
 
 @dataclass
@@ -194,10 +183,7 @@ class Store:
                 p = self.res.positions.get(flags[0].sku) if flags[0].sku else None
                 rows[key] = Row(key=key, sku=flags[0].sku, description=flags[0].description,
                                 sales_date=p.sales_date if p and p.sales_date else self.sales_date,
-                                # A carry-forward moves stock on the figures the other flags
-                                # question, so those are checked first: carries come last.
-                                flags=sorted(flags, key=lambda f: (f.rule in config.CARRY_FORWARD_RULES,
-                                                                   -f.priority)),
+                                flags=sorted(flags, key=lambda f: f.priority, reverse=True),
                                 position=p, claim=self.claims.get(key))
             self.rows = rows
             after = {k: fingerprint(r) for k, r in rows.items()}
@@ -453,15 +439,6 @@ class Store:
         pending = [f for f in row.open_flags if self.ack_state(f)["state"] in ("due", "overdue")]
         return sorted(pending, key=lambda f: self.first_seen[f.id])
 
-    def carried_in(self) -> list[dict]:
-        """Accepted carry-forward surplus, by the sales day it lands on (awaiting the MIPS correction)."""
-        by_day: dict[dt.date, float] = {}
-        for r in self.rows.values():
-            if r.carry_accepted and r.position:
-                surplus = r.position.stock_surplus
-                by_day[next_sales_day(r.sales_date)] = by_day.get(next_sales_day(r.sales_date), 0.0) + surplus
-        return [{"date": d, "units": u} for d, u in sorted(by_day.items()) if u]
-
     def counts(self, user: str) -> dict:
         return {"all": sum(1 for r in self.rows.values() if r.is_open),
                 "ack": sum(1 for r in self.rows.values()
@@ -646,5 +623,4 @@ def ledger(row: Row) -> dict | None:
         "pct": {"demand": pct(demand), "alloc": pct(alloc), "avail": pct(avail), "wo": pct(wo_in),
                 "over": pct(over), "short": pct(short)},
         "systems": [{"system": s, "label": l, "value": v, "pct": pct(v)} for s, l, v in systems],
-        "next_day": next_sales_day(row.sales_date),
     }

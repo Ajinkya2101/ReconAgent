@@ -70,7 +70,7 @@
   {% if L %}
   <section class="position" aria-labelledby="position-h">
     <h3 id="position-h">Supply against demand</h3>
-    <figure class="track" style="--from:{{ today.fill }};--to:{{ today.fill }};--demand:{{ L.pct.demand }}%">
+    <figure class="track" style="--from:{{ today.fill }};--demand:{{ L.pct.demand }}%">
       <figcaption class="sr">Supply against demand on one scale: allocated {{ L.allocated|num }}, available {{ L.available|num }}, work order {{ L.wo|num }}, demand {{ L.demand|num }}{% if L.over %}, {{ L.over|num }} more than demand{% endif %}{% if L.short %}, {{ L.short|num }} short{% endif %}.</figcaption>
       <div class="track-bar" aria-hidden="true">
         <span class="seg seg--alloc" style="left:0;width:{{ L.pct.alloc }}%"></span>

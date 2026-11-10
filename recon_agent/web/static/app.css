@@ -111,8 +111,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .chip .icon { width: 13px; height: 13px; stroke-width: 2; }
 .chip--due { box-shadow: inset 0 0 0 1px var(--ink); }
 .chip--overdue { background: var(--ink); color: #fff; }
-.chip--claim, .chip--note, .chip--carry, .chip--acked { background: var(--raised); box-shadow: inset 0 0 0 1px var(--rule-2); color: var(--ink-2); }
-.chip--carry { padding-right: 3px; }
+.chip--claim, .chip--note, .chip--acked { background: var(--raised); box-shadow: inset 0 0 0 1px var(--rule-2); color: var(--ink-2); }
 .kbd, .keys kbd { font: 600 11px var(--mono); padding: 1px 5px; border: 1px solid var(--control); border-radius: 3px; color: var(--ink-3); }
 
 
@@ -188,7 +187,6 @@ h1, h2, h3, h4, p { margin: 0; }
 .day input:checked + .day-face { background: var(--raised); box-shadow: inset 0 0 0 2px var(--ink); }
 .day input:focus-visible + .day-face { outline: 2px solid var(--ink); outline-offset: 2px; }
 .day-name { font-weight: 650; }
-.carried-in { display: contents; }
 .day--incoming { cursor: default; }
 .day--incoming .day-face { box-shadow: none; outline: 1px dashed var(--ink-2); outline-offset: -1px; }  /* pending: not yet a sales day with work */
 /* One open sales day: the day is the shelf label, not a one-option filter. */
@@ -304,7 +302,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .eq-row--total dt { font-weight: 700; }
 .eq-row--total dd { font-size: var(--t-2xl); font-weight: 700; letter-spacing: -0.015em; }
 
-/* Signature: the demand track, surplus re-tags to the next sales day */
+/* Signature: the demand track, supply against demand on one scale */
 .track { margin: 4px 0 6px; }
 .track-bar { position: relative; height: 30px; }
 .seg { position: absolute; top: 0; bottom: 0; }
@@ -315,17 +313,6 @@ h1, h2, h3, h4, p { margin: 0; }
 .seg--surplus {
   overflow: hidden; box-shadow: inset 0 0 0 1px var(--ink); background: var(--from);
 }
-.seg--surplus::after {
-  content: ""; position: absolute; inset: 0; background: var(--to); box-shadow: inset 0 0 0 1px var(--ink);
-  clip-path: inset(0 100% 0 0); transition: clip-path 220ms var(--ease);
-}
-.is-retagged .seg--surplus::after { clip-path: inset(0 0 0 0); }
-/* Preview of the re-tag: pointing at (or tabbing to) an Accept that carries surplus shows where
-   the product goes before anyone commits. A dashed edge marks it as a preview, not a decision. */
-.detail:has([data-carry-accept]:is(:hover, :focus-visible)) .track:not(.is-retagged) .seg--surplus::after { clip-path: inset(0 0 0 0); }
-.detail:has([data-carry-accept]:is(:hover, :focus-visible)) .track:not(.is-retagged) .seg--surplus { outline: 1.5px dashed var(--ink); outline-offset: 3px; }
-.retag-now .seg--surplus::after { animation: retag 220ms var(--ease) both; }
-@keyframes retag { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 .track-end { position: absolute; top: -6px; bottom: -6px; width: 2px; margin-left: -1px; background: var(--ink); }
 .track-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 12px; font-size: var(--t-xs); color: var(--ink-2); }
 .track-legend > span { display: inline-flex; align-items: center; gap: 6px; }
@@ -336,11 +323,6 @@ h1, h2, h3, h4, p { margin: 0; }
 .key--wrap { background: var(--ink); }
 .key--short { box-shadow: inset 0 0 0 1.5px var(--ink); }
 .track-demand-label { font-weight: 700; color: var(--ink); }
-.track-carry { font-weight: 650; color: var(--ink); }
-.track-carry em { font-style: normal; font-weight: 400; color: var(--ink-3); }
-.track-carry .icon { width: 14px; height: 14px; }
-.retag-now .track-carry { animation: carry-in 220ms var(--ease) both; }
-@keyframes carry-in { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 
 /* One shared scale for every system */
 .systems { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: var(--t-sm); }
@@ -474,9 +456,6 @@ h1, h2, h3, h4, p { margin: 0; }
 .flag.is-decided .flag-head h4, .flag.is-decided .flag-explain { color: var(--ink-2); }
 .decided { margin-top: 12px; padding: 10px 12px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--rule-2); border-radius: 2px; font-size: var(--t-sm); }
 .decided-note { margin-top: 4px; color: var(--ink-2); }
-.carry-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; font-weight: 600; }
-.carry-line .icon { width: 14px; height: 14px; }
-.retag-now .carry-to { display: inline-flex; animation: carry-in 220ms var(--ease) both; }
 .change { margin-top: 6px; }
 .change summary { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; list-style: none; font-size: var(--t-xs); font-weight: 600; color: var(--ink-2); }
 .change summary::-webkit-details-marker { display: none; }

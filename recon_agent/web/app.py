@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .. import __version__, ai, config, security, sources, users
-from .store import ACCEPTED, AI_READY, REJECTED, Row, Store, day_tag, ledger, next_sales_day
+from .store import ACCEPTED, AI_READY, REJECTED, Row, Store, day_tag, ledger
 
 HERE = Path(__file__).parent
 SESSION_COOKIE = "recon_session"
@@ -133,7 +133,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     env = templates.env
     env.filters.update(num=num, money=money, hm=hm, units=units, initials=initials, humanize=humanize, group_actions=group_actions,
                        evidence_lines=evidence_lines)
-    env.globals.update(APPROVERS=APPROVERS, day_tag=day_tag, ledger=ledger, next_sales_day=next_sales_day, VIEWS=VIEWS, VIEW_SHORT=VIEW_SHORT, ACCEPTED=ACCEPTED, REJECTED=REJECTED,
+    env.globals.update(APPROVERS=APPROVERS, day_tag=day_tag, ledger=ledger, VIEWS=VIEWS, VIEW_SHORT=VIEW_SHORT, ACCEPTED=ACCEPTED, REJECTED=REJECTED,
                        config=config, store=store, ai_available=ai.credentials_available())
 
     def user_of(request: Request) -> dict | None:
@@ -169,11 +169,11 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 "counts": store.counts(user["name"]), "version": store.version}
 
     def detail_response(request: Request, row: Row, user: dict, oob_row: bool = True,
-                        retag_now: bool = False, announce: str = "", moved: dict | None = None) -> HTMLResponse:
+                        announce: str = "", moved: dict | None = None) -> HTMLResponse:
         """The SKU detail, plus (after an action) its queue row, counts and day totals out of band,
         and one line for screen readers saying what just happened."""
         return render(request, "_detail_response.html", user=user, selected=row, oob_row=oob_row,
-                      version=store.version, retag_now=retag_now, announce=announce, moved=moved)
+                      version=store.version, announce=announce, moved=moved)
 
     def label(row: Row) -> str:
         return row.sku or "the plant-wide row"
@@ -346,10 +346,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         if not is_htmx(request):
             return RedirectResponse(f"/row/{row.key}", status_code=303)
         rule = flag_id.split("-", 1)[0]
-        retag = decision == "accept" and rule in config.CARRY_FORWARD_RULES
         moved = rank_move(row, flag_id, before, was)
         said = f"{'Accepted' if decision == 'accept' else 'Rejected'} {rule} on {label(row)}. {moved['said']}"
-        return detail_response(request, row, user, retag_now=retag, announce=said, moved=moved)
+        return detail_response(request, row, user, announce=said, moved=moved)
 
     def rank_move(row: Row, flag_id: str, before: int | None, was: float) -> dict:
         """Why the row moved in the queue after a decision, so a jump in rank is never silent: the

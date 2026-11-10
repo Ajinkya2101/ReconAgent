@@ -17,7 +17,6 @@
           </span>
         </label>
         {% endfor %}
-        <div id="carried-in" class="carried-in">{% include "_carried_in.html" %}</div>
       </fieldset>
       {% else %}
       {# One open sales day: the queue is a single shelf, so the day is its label instead of a
@@ -29,6 +28,5 @@
           {{ day_stats(d) }}
         </div>
         {% endfor %}
-        <div id="carried-in" class="carried-in">{% include "_carried_in.html" %}</div>
       </div>
       {% endif %}
