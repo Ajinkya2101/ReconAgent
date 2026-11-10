@@ -63,7 +63,7 @@ FROM base;
 
 def snake(col: str) -> str:
     """'Allocated quantity for SO' -> 'allocated_quantity_for_so': the database column name."""
-    s = col.replace("%", " pct").replace("/", " ").replace("&", " and ").replace("-", " ")
+    s = col.replace("%", " pct").replace("$", " usd").replace("/", " ").replace("&", " and ").replace("-", " ")
     return re.sub(r"[^0-9a-z]+", "_", s.lower()).strip("_")
 
 

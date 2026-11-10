@@ -232,6 +232,19 @@ class SeedTest(unittest.TestCase):
         self.assertEqual((p.mips_demand, p.wo_qty, p.balance), (55635, 48635, 0))
         self.assertEqual((len(p.orders), len(p.odi)), (11, 12))
 
+    def test_prices_and_stock_served_lines(self):
+        res = run(seeded_log())
+        # 76108 at the workbook's $4.69; 76105 priced like it, 950513 (butter) at $4.99.
+        self.assertEqual({k: p.unit_price for k, p in res.positions.items()},
+                         {"76108": 4.69, "950513": 4.99, "76105": 4.69})
+        self.assertEqual(res.findings[0].unit_price if res.findings else None,
+                         res.positions[res.findings[0].sku].unit_price)
+        # A line served from allocated stock has no work order and no batch counts (as in the workbook).
+        for p in res.positions.values():
+            for e in p.odi:
+                if e.allocated:
+                    self.assertEqual((e.wo, e.sched_batches, e.act_batches), ("", 0, 0), e.entry_id)
+
     def test_seed_needs_an_empty_log(self):
         with self.assertRaises(ValueError):
             seed.seed(seeded_log())
@@ -297,6 +310,10 @@ class WorkbookFeedTest(unittest.TestCase):
         self.assertGreater(feed.position(), 0.0)
         self.assertEqual(len(feed.load().sales_orders), 18)
 
+    def test_the_price_column_before_10_nov_is_still_read(self):
+        old, new = ({"Order Number": 1, k: 3.5} for k in ("Price", "Price in $"))
+        self.assertEqual([o.price for o in ingest.sales_orders([old, new])], [3.5, 3.5])
+
 
 @unittest.skipUnless(any(config.DATA_DIR.glob(config.WORKBOOK_GLOB)), "the 9 Nov mapping workbook is not present")
 class BusinessWorkbookTest(unittest.TestCase):
@@ -308,6 +325,27 @@ class BusinessWorkbookTest(unittest.TestCase):
         self.assertEqual((p.mips_demand, p.wo_qty, p.balance), (55635, 48635, 0))
         self.assertEqual(res.findings, [])
         self.assertEqual(list(res.positions), ["76108"])   # the other nine forecasts are planning only
+        self.assertEqual(p.unit_price, 4.69)   # `Price in $`, from the 10 Nov revision
+
+    def test_the_seed_carries_76108_value_for_value(self):
+        from dataclasses import asdict
+
+        def records(src: ingest.SourceData) -> dict:
+            refs = {o.order_nbr for o in src.sales_orders if o.sku == "76108"} | {"FC001"}
+            return {"items": {k: asdict(v) for k, v in src.items.items()},
+                    "forecasts": [asdict(f) for f in src.forecasts],
+                    "orders": sorted((asdict(o) for o in src.sales_orders if o.sku == "76108"),
+                                     key=lambda o: o["line_id"]),
+                    "odi": [asdict(e) for e in src.odi if e.ref in refs],
+                    "stock": [asdict(s) for s in src.stock if s.sku == "76108"],
+                    "work_orders": [asdict(w) for w in src.work_orders if w.sku == "76108"]}
+
+        p = Projector(seeded_log())
+        p.catch_up()
+        workbook, seeded = records(sources.ExcelFeed().load()), records(p.source_data())
+        for part in workbook:
+            with self.subTest(part=part):
+                self.assertEqual(seeded[part], workbook[part])
 
 
 if __name__ == "__main__":

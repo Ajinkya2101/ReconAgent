@@ -1,4 +1,4 @@
-# Event Contract v3 and Simulated Feed
+# Event Contract v4 and Simulated Feed
 
 How source-system changes reach the reconciliation agent as events during the POC, and what each event must contain. This document covers Phases 0–5 of the real-time plan:
 
@@ -80,7 +80,9 @@ Row images are JSON objects keyed by the **business team's own workbook column n
 ## 4. Entities
 
 v3 has one entity per sheet of the business team's workbook `BIMBO_MIPS_WMS_ODI_Data_9th_NOV.xlsx`. It
-replaces the v2 entities, which followed the five daily extracts.
+replaces the v2 entities, which followed the five daily extracts. v4 follows the workbook's 10 Nov revision:
+the BUSS column `Price` is renamed `Price in $` (`price_in_usd` in the SQL exports). A log written under v3 is
+recreated empty on first start: publish the seed again.
 
 | Entity | Source | Workbook sheet | Key |
 |---|---|---|---|
@@ -99,7 +101,7 @@ workbook and the event log reconcile identically (`tests/test_events.py`).
 <!-- columns:begin (generated from contract.py) -->
 **`buss.sales_order`**: Customer order line received from BUSS (Sales Orders).
 
-`SO Line ID` (str, **key** (synthetic)) · `Order Number` (str, required) · `Order Line` (number) · `Order Type` (str) · `Order Date` (date) · `Customer Name` (str) · `Ship-To Location (USA)` (str) · `FG BUSS Code` (str) · `Item Number` (str, required) · `Item Description` (str) · `UOM` (str) · `Order Quantity` (number, required) · `Requested Ship Date` (date) · `Sales Date` (date) · `Price` (number)
+`SO Line ID` (str, **key** (synthetic)) · `Order Number` (str, required) · `Order Line` (number) · `Order Type` (str) · `Order Date` (date) · `Customer Name` (str) · `Ship-To Location (USA)` (str) · `FG BUSS Code` (str) · `Item Number` (str, required) · `Item Description` (str) · `UOM` (str) · `Order Quantity` (number, required) · `Requested Ship Date` (date) · `Sales Date` (date) · `Price in $` (number)
 
 **`oracle.forecast`**: Expected demand planned in Oracle (Oracle Planning & Forecast).
 

@@ -194,7 +194,7 @@ def sales_orders(records: list[dict]) -> list[SalesOrder]:
             buss_code=norm_ref(r.get("FG BUSS Code")), sku=norm_sku(r.get("Item Number")),
             description=text(r.get("Item Description")), uom=text(r.get("UOM")), qty=num(r.get("Order Quantity")),
             requested_ship=as_date(r.get("Requested Ship Date")), sales_date=as_date(r.get("Sales Date")),
-            price=num(r.get("Price"))))
+            price=num(r.get("Price in $", r.get("Price")))))   # `Price` before 10 Nov
     return out
 
 
@@ -271,7 +271,8 @@ def clean_header(value) -> str:
 def sheet_rows(ws) -> list[dict]:
     """Rows below the header (the first row with three or more cells), keyed by cleaned header.
 
-    The sheets differ in layout (Sales Orders starts in column B); empty columns are dropped."""
+    The header is found wherever it starts (Sales Orders has moved between columns A and B);
+    empty columns are dropped."""
     rows = [tuple(r) for r in ws.iter_rows(values_only=True)]
     idx = next((i for i, r in enumerate(rows) if sum(v is not None for v in r) >= 3), None)
     if idx is None:

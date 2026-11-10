@@ -240,7 +240,7 @@ Key tunables in `config.py`:
 | `CARRYOVER_MIN_UNITS` | 50 | Minimum surplus for R06 |
 | `OVERPRODUCTION_MIN_UNITS` | 100 | Minimum recovery-run over-build for R05 |
 | `ROBUST_Z_THRESHOLD` | 3.5 | Outlier cut-off for R17 |
-| `DEFAULT_UNIT_PRICE` | 3.99 | Price used when MIPS has none |
+| `DEFAULT_UNIT_PRICE` | 3.99 | Price used when a SKU's BUSS orders carry no `Price in $` |
 | `HIGH_ACK_MINUTES` | 15 | Acknowledgment SLA for High flags |
 | `WEB_POLL_SECONDS` | 20 | Change-poll interval |
 

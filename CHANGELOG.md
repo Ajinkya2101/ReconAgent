@@ -6,6 +6,18 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+### Changed: the 10 Nov revision of the business workbook (event contract v4)
+- **Price.** The BUSS column `Price` is now `Price in $` and carries $4.69 on every 76108 line. The contract
+  renames the column, so the dollar ranking uses real prices instead of the $3.99 default. The reader still
+  accepts a workbook with the old `Price` header. An event log written under v3 is recreated empty on first
+  start: publish the seed again.
+- **Seed.** 76108 matches the revised workbook value for value, including its price and the blank batch
+  counts on the order served from allocated stock (now checked against the workbook when it is present).
+  The invented SKUs get prices: 76105 $4.69, 950513 $4.99. The same five flags are raised, with dollar values
+  at these prices. Scenario S2's new order carries $4.69.
+- **Data questions.** [docs/Data_Inconsistencies_9Nov.pdf](docs/Data_Inconsistencies_9Nov.pdf) lists the
+  workbook's own inconsistencies, with values, for the business team. No rule changes until they answer.
+
 ### Fixed: every figure and explanation follows the source data live
 - **Change detection.** The worklist used to announce a change only when a row's flag IDs or units moved,
   so an edit that changed a batch count, a wrap time, a name or an explanation never reached open screens,

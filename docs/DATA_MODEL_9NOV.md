@@ -5,7 +5,9 @@ client extracts of 12 Sep 2026 (MIPS Order Data, ODI Finished Good / Batch Data,
 Order Summary by Item).
 
 **Reference:** `data/new_dummy_data/` (client material, not committed):
-- `BIMBO_MIPS_WMS_ODI_Data_9th_NOV.xlsx`: the six source sheets for one SKU (76108).
+- `BIMBO_MIPS_WMS_ODI_Data_9th_NOV (1).xlsx`: the six source sheets for one SKU (76108). Revised on
+  10 Nov: the BUSS price column is now `Price in $` and holds $4.69 on every line, and the order served
+  from allocated stock no longer carries batch counts in ODI.
 - `BIMBO_Column_Meanings.docx`: what each column means.
 - `Demand_to_Delivery_Flow_76108.docx`: the flow and the worked example.
 
@@ -28,10 +30,15 @@ The agent now checks that every system carries its part of that chain:
 - MIPS plans the demand that is left and sizes the work order to the shortfall.
 
 The model stays as simple as the workbook. The only additions are synthetic row keys, wherever a sheet has
-no natural one. `Price` stays empty, as in the workbook, so the dollar ranking uses the default retail price
-($3.99 a unit) until real prices arrive.
+no natural one. The dollar ranking uses the BUSS `Price in $` of the SKU's orders ($4.69 for 76108), and the
+default retail price ($3.99 a unit) only when a SKU's orders carry no price.
 
-## 2. Source entities (event contract v3)
+The workbook has inconsistencies of its own that need answers from the business team, for example ODI ship
+dates a day or two before BUSS's and wrapping that ends before the work order dates. They are listed, with
+the values, in [Data_Inconsistencies_9Nov.pdf](Data_Inconsistencies_9Nov.pdf). The seed keeps them as they are,
+and no rule is added for them until the business team answers.
+
+## 2. Source entities (event contract v4)
 
 One entity per sheet. Column names are the business team's own, with whitespace normalised. For
 example, `Quantity ` becomes `Quantity` and `Allocated quantity  for SO ` becomes
@@ -100,8 +107,8 @@ has no bill of materials and no RM stock or inbound. The checks can be added onc
 | SKU | Item | Built from | Seeded state | Flags |
 |---|---|---|---|---|
 | 76108 | BP WHITE HOT DOG BUNS 8P 14Z | The workbook, value for value | Reconciles: the control | none |
-| 950513 | BP BUTTER HOT DOG BUNS 8P 15Z | Forecast FC002 (3,000) from the workbook; orders, stock and work order invented in the same shape | MIPS sized the work order to demand left and did not subtract WMS available stock. The plant also mixed one batch more than scheduled. | R05 (over-production 1,140), R11 |
-| 76105 | BP WHITE HAMBURGER BUNS 8P 15Z | Forecast FC004 (6,677) from the workbook; the rest invented | ODI holds a stale copy of one order. WMS on hand does not balance. One order's ship date is before the wrap. | R02, R10, R12 |
+| 950513 | BP BUTTER HOT DOG BUNS 8P 15Z | Forecast FC002 (3,000) from the workbook; orders, stock, work order and price ($4.99) invented in the same shape | MIPS sized the work order to demand left and did not subtract WMS available stock. The plant also mixed one batch more than scheduled. | R05 (over-production 1,140), R11 |
+| 76105 | BP WHITE HAMBURGER BUNS 8P 15Z | Forecast FC004 (6,677) from the workbook; the rest invented, priced like 76108 ($4.69) | ODI holds a stale copy of one order. WMS on hand does not balance. One order's ship date is before the wrap. | R02, R10, R12 |
 
 The other seven FG items and the nine RM items in the item master are loaded as master data only.
 
@@ -126,7 +133,7 @@ Each scenario is also a regression test (`tests/test_scenarios.py`).
 
 | Area | Change |
 |---|---|
-| `events/contract.py` | v3: the six entities above; sources BUSS, ORACLE, MIPS, ODI, WMS |
+| `events/contract.py` | v3: the six entities above; sources BUSS, ORACLE, MIPS, ODI, WMS. v4 (10 Nov): `Price` is renamed `Price in $` |
 | `ingest.py` | New records and mappers; one workbook reader (six sheets, headers normalised) |
 | `position.py` | The position in section 3 |
 | `detectors.py` | The 13 rules in section 4; `anomaly.py` is removed |

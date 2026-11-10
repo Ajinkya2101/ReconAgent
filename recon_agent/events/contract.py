@@ -1,4 +1,4 @@
-"""Event contract v3: what a source-system change looks like on the event log.
+"""Event contract v4: what a source-system change looks like on the event log.
 
 Each event is one row-level change (insert, update or delete) in one source
 entity, shaped like a GoldenGate CDC record: an operation, the row key, and full
@@ -10,13 +10,16 @@ rows and workbook rows with the same code.
 Where a sheet has no row identifier, the contract adds one synthetic key column
 (marked below). Those are assumptions to confirm with Bimbo IT; see
 docs/EVENT_CONTRACT.md.
+
+v4 follows the 10 Nov revision of the workbook: the BUSS price column is `Price in $`
+(it was `Price`, and empty). A log written under v3 is recreated empty: seed it again.
 """
 from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
 
-VERSION = 3
+VERSION = 4
 SOURCES = ("BUSS", "ORACLE", "MIPS", "ODI", "WMS")
 OPS = ("I", "U", "D")   # GoldenGate op_type: insert, update, delete
 
@@ -48,7 +51,7 @@ ENTITIES: dict[str, Entity] = {e.name: e for e in (
             "SO Line ID": STR, "Order Number": STR, "Order Line": NUM, "Order Type": STR, "Order Date": DATE,
             "Customer Name": STR, "Ship-To Location (USA)": STR, "FG BUSS Code": STR, "Item Number": STR,
             "Item Description": STR, "UOM": STR, "Order Quantity": NUM, "Requested Ship Date": DATE,
-            "Sales Date": DATE, "Price": NUM,
+            "Sales Date": DATE, "Price in $": NUM,
         },
         required=("SO Line ID", "Order Number", "Item Number", "Order Quantity")),
     Entity(

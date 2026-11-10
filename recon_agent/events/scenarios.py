@@ -90,7 +90,7 @@ SCENARIOS: dict[str, Scenario] = {s.id: s for s in (
                   "Order Type": "DSD_SALES_ORDER", "Order Date": "sales", "Customer Name": "BBU_LANCASTER NY CMB",
                   "Ship-To Location (USA)": "Lancaster, NY, USA", "FG BUSS Code": "2771", "Item Number": "76108",
                   "Item Description": "BP WHITE HOT DOG BUNS 8P 14Z", "UOM": "Units", "Order Quantity": 900,
-                  "Requested Ship Date": "sales", "Sales Date": "sales"})])],
+                  "Requested Ship Date": "sales", "Sales Date": "sales", "Price in $": 4.69})])],
         ("R01-2263260-1", "R04-76108", "R05-76108")),
     Scenario(
         "S3", 3, "A customer cancels in BUSS; ODI keeps the line",

@@ -1,13 +1,19 @@
 """Starting dataset: one sales day at plant UBD, published as insert events.
 
-Built from the business team's 9 Nov mapping workbook (docs/DATA_MODEL_9NOV.md):
+Built from the business team's 9 Nov mapping workbook, as revised on 10 Nov
+(docs/DATA_MODEL_9NOV.md):
 
 - 76108 BP WHITE HOT DOG BUNS 8P 14Z is the workbook's own example, value for value:
-  11 BUSS orders (14,339), forecast FC001 (41,769), 473 allocated and 7,000 available in
-  WMS, work order WO-UBD-20260912-001 for 48,635. It reconciles: the control SKU.
+  11 BUSS orders (14,339) at $4.69, forecast FC001 (41,769), 473 allocated and 7,000
+  available in WMS, work order WO-UBD-20260912-001 for 48,635. It reconciles: the control SKU.
 - 950513 and 76105 take their forecast (FC002, FC004) from the workbook; their orders,
-  stock and work orders are invented in the same shape, each with known mismatches
-  (EXPECTED lists the flags).
+  stock, work orders and prices are invented in the same shape, each with known mismatches
+  (EXPECTED lists the flags). 76105 is priced like 76108 (same white-bun family, $4.69);
+  950513 (butter) at $4.99.
+
+The workbook's own inconsistencies (docs/Data_Inconsistencies_9Nov.pdf: ODI ship dates a day
+or two before BUSS's, wrapping before the work order dates, and so on) are kept as they are:
+the seed mirrors the source data, it does not correct it.
 
 The item master and all ten forecasts are loaded as in the workbook. An item that has
 only a forecast is planned in Oracle, not yet scheduled, and gets no position.
@@ -79,7 +85,7 @@ def wo_number(sales_date: dt.date, n: int) -> str:
 # allocated in WMS, ODI quantity when ODI's copy differs). Work order: what MIPS plans.
 SKUS = {
     "76108": {   # the workbook, value for value: reconciles
-        "buss": "2771", "forecast": "FC001", "wo": 1, "line": "Line 1", "shift": "Shift G",
+        "buss": "2771", "forecast": "FC001", "wo": 1, "price": 4.69, "line": "Line 1", "shift": "Shift G",
         "oracle_type": "SU392933", "formula": "PH202825A", "mips_desc": "Ball Park Hot Dogs",
         "wrap": ((3, 17, 34), (3, 22, 8)), "batches": (1, 1), "forecast_ship": 2,
         "orders": [
@@ -98,7 +104,7 @@ SKUS = {
         "stock": (7473, 7000, 473, "FG.1.1.1"), "mips": (55635, 48635),
     },
     "950513": {   # MIPS sized the work order to demand left, ignoring the 1,140 available (R05); one extra batch (R11)
-        "buss": "2790", "forecast": "FC002", "wo": 2, "line": "Line 1", "shift": "Shift B",
+        "buss": "2790", "forecast": "FC002", "wo": 2, "price": 4.99, "line": "Line 1", "shift": "Shift B",
         "oracle_type": "SU392940", "formula": "PH202830A", "mips_desc": "Ball Park Butter Hot Dogs",
         "wrap": ((3, 23, 5), (2, 1, 40)), "batches": (4, 5), "forecast_ship": 2,
         "orders": [
@@ -109,7 +115,7 @@ SKUS = {
         "stock": (1500, 1140, 360, "FG.1.1.2"), "mips": (4840, 4840),
     },
     "76105": {   # ODI copy of the Colonie order stale (R02); WMS on hand off by 100 (R10); Albany wrapped late (R12)
-        "buss": "2765", "forecast": "FC004", "wo": 3, "line": "Line 2", "shift": "Shift B",
+        "buss": "2765", "forecast": "FC004", "wo": 3, "price": 4.69, "line": "Line 2", "shift": "Shift B",
         "oracle_type": "SU392951", "formula": "PH202840A", "mips_desc": "Ball Park Hamburger Buns",
         "wrap": ((2, 5, 10), (2, 9, 45)), "batches": (3, 3), "forecast_ship": 2,
         "orders": [
@@ -173,7 +179,7 @@ def build(sales_date: dt.date = DEFAULT_SALES_DATE) -> list[Change]:
                 "SO Line ID": f"{order}-1", "Order Number": order, "Order Line": 1, "Order Type": "DSD_SALES_ORDER",
                 "Order Date": S, "Customer Name": customer, "Ship-To Location (USA)": SHIP_TO[customer],
                 "FG BUSS Code": c["buss"], "Item Number": sku, "Item Description": desc, "UOM": "Units",
-                "Order Quantity": qty, "Requested Ship Date": S, "Sales Date": S, "Price": None}, _at(S, 3, 10))
+                "Order Quantity": qty, "Requested Ship Date": S, "Sales Date": S, "Price in $": c["price"]}, _at(S, 3, 10))
 
         # --- MIPS work order ------------------------------------------------------
         add("mips.work_order", {
@@ -186,7 +192,8 @@ def build(sales_date: dt.date = DEFAULT_SALES_DATE) -> list[Change]:
         def odi(source: str, ref: str, line: int | None, qty: float, ship_days: int, allocated: float) -> None:
             nonlocal odi_n
             odi_n += 1
-            on_wo = not allocated   # a line served from allocated stock has no work order (as in the workbook)
+            on_wo = not allocated   # a line served from allocated stock has no work order and no batches
+                                    # (as in the workbook)
             add("odi.batch_mapping", {
                 "ODI Entry ID": f"ODI-{odi_n:04d}", "Plant Code": PLANT_CODE, "Schedule Date": S,
                 "Source System": source, "BUSS Sales / Forcast Date": S, "Product Sales Date": S,
@@ -200,7 +207,8 @@ def build(sales_date: dt.date = DEFAULT_SALES_DATE) -> list[Change]:
                 "Plant Name": PLANT_NAME if on_wo else None, "Prod Line": c["line"] if on_wo else None,
                 "Shift": c["shift"] if on_wo else None, "Oracle Type": c["oracle_type"] if on_wo else None,
                 "Oracle Formula": c["formula"] if on_wo else None, "MIPS Description": c["mips_desc"] if on_wo else None,
-                "MIPS Sched Batches": sched, "Act Batches Mixed": mixed, "Batch Status": None},
+                "MIPS Sched Batches": sched if on_wo else None, "Act Batches Mixed": mixed if on_wo else None,
+                "Batch Status": None},
                 wrap_end + dt.timedelta(minutes=30))
 
         odi("OCloud Region2", c["forecast"], None, FORECASTS[c["forecast"]][1], c["forecast_ship"], 0)
