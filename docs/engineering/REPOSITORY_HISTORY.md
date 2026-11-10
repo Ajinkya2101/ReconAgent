@@ -46,6 +46,7 @@ it back as a long-lived branch).
 | 0.1.0 | 2026-10-29 | Before this repository (its first push is 3 Nov) | none | v2 |
 | 0.2.0 | 2026-11-03 | `8786987` | none: it was not tagged when released | v2 |
 | 0.3.0 | 2026-11-10 | the commit tagged `v0.3.0` | `v0.3.0` | v3, event contract v4 |
+| 0.3.1 | 2026-11-10 | the commit tagged `v0.3.1` | `v0.3.1` | v3, event contract v4 |
 
 0.2.0 is left untagged on purpose: pushing a `v0.2.0` tag now would start the Release workflow and
 publish an old image as `latest`.

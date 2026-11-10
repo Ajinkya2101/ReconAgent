@@ -6,6 +6,8 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-10
+
 ### Changed: source changes wait for Update again
 - 0.3.0 redrew the worklist by itself whenever the source data changed. The top bar again shows
   "N rows changed by others · Update" (or "AI explanations ready · Update", "Figures changed · Update"),
