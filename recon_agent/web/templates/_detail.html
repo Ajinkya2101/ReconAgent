@@ -14,9 +14,20 @@
       {{ tag(row.sales_date, "tag--lg") }}
       <h2 id="detail-h" tabindex="-1">{{ sku_label(row) }} <span class="detail-item">{{ row.description }}</span></h2>
     </div>
+    {#- The large figure is what is still at risk, so a decision visibly moves it; what has been
+        accepted sits under it. A row with no retail value leads with its units instead of a dash. -#}
+    {% set n_accepted = row.flags|selectattr("status", "eq", ACCEPTED)|list|length %}
     <div class="detail-money">
-      <span class="detail-dollars">{{ money_or_dash(row.dollars) }}</span>
-      <span class="detail-cap">{% if n_open > 1 %}largest of {{ n_open }} open flags{% elif n_open == 1 %}1 open flag{% else %}all {{ row.flags|length }} flags decided{% endif %}</span>
+      {% if n_open and row.at_risk < 0.5 %}
+      <span class="detail-dollars detail-dollars--units">{{ row.lead_units|num }} <small>{{ "unit" if row.lead_units|round == 1 else "units" }}</small></span>
+      <span class="detail-cap">no retail value · {% if n_open > 1 %}top of {{ n_open }} open flags{% else %}1 open flag{% endif %}</span>
+      {% else %}
+      <span class="detail-dollars">{{ row.at_risk|money }}</span>
+      <span class="detail-cap">{% if n_open > 1 %}still at risk · largest of {{ n_open }} open flags{% elif n_open == 1 %}still at risk · 1 open flag{% else %}still at risk · all {{ row.flags|length }} flags decided{% endif %}</span>
+      {% endif %}
+      {% if n_accepted %}
+      <span class="detail-accepted"><b>{{ row.accepted_dollars|money }}</b> accepted <small>{{ n_accepted }} {{ "flag" if n_accepted == 1 else "flags" }} added up, not deduplicated</small></span>
+      {% endif %}
     </div>
     <div class="claim" id="claim">
       {% if not row.claim %}
@@ -82,7 +93,8 @@
   {% endif %}
 
   <section class="flags" aria-labelledby="flags-h">
-    <h3 id="flags-h">{% if n_open %}Decide{% else %}Flags{% endif %} <span class="count">{{ row.flags|length }}</span></h3>
+    {% set n_decided = row.decided_flags|length %}
+    <h3 id="flags-h">{% if n_open %}Decide{% else %}Flags{% endif %} <span class="count">{% if n_decided and n_open %}{{ n_decided }} of {{ row.flags|length }} decided{% else %}{{ row.flags|length }}{% endif %}</span></h3>
     {% for f in row.flags %}{% include "_flag.html" %}{% endfor %}
     {% if row.is_open %}
     <details class="note-add">

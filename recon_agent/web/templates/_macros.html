@@ -16,6 +16,18 @@
 {%- if x >= 0.5 %}{{ x|money }}{% else %}<span class="no-money" title="No retail value attached to this flag"><span aria-hidden="true">—</span><span class="sr">No retail value</span></span>{% endif -%}
 {%- endmacro %}
 
+{# A sales day's totals: money still at risk, then what decisions have already moved. Its own id, so a
+   decision redraws it out of band without touching the day filter around it. #}
+{% macro day_stats(d, oob=false) -%}
+<span class="day-stats" id="day-stats-{{ d.date.isoformat() }}"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>
+  <span class="day-money">{% if d.dollars >= 0.5 %}{{ d.dollars|money }}{% else %}{{ d.flags }} {{ "flag" if d.flags == 1 else "flags" }}{% endif %}</span>
+  <span class="day-sub">{% if d.dollars >= 0.5 %}retail $ at risk · {% endif %}{{ d.rows }} {{ "row" if d.rows == 1 else "rows" }} · {{ d.flags }} open {{ "flag" if d.flags == 1 else "flags" }}</span>
+  {%- if d.decided %}
+  <span class="day-decided">{% if d.accepted >= 0.5 %}<b>{{ d.accepted|money }}</b> accepted<span class="sr"> (each accepted flag's own retail $, added up; flags on one SKU can overlap)</span> · {% endif %}{{ d.decided }} {{ "flag" if d.decided == 1 else "flags" }} decided</span>
+  {%- endif %}
+</span>
+{%- endmacro %}
+
 {# SKU number in mono; plant-level rows have no SKU and say so in words. #}
 {% macro sku_label(r) -%}
 {%- if r.sku %}<span class="code">{{ r.sku }}</span>{% else %}<span class="plant">Plant-wide</span>{% endif -%}

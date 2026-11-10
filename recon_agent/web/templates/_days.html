@@ -1,4 +1,4 @@
-{% from "_macros.html" import tag %}
+{% from "_macros.html" import tag, day_stats %}
 {#- The sales-day tiles with their $ at risk and counts. Inside #filters on the page; redrawn out of
     band (days_oob) when the data changes, so the totals follow the source systems live. -#}
       {% if days|length > 1 %}
@@ -13,10 +13,7 @@
           <input type="radio" name="day" value="{{ d.date.isoformat() }}" {% if day == d.date.isoformat() %}checked{% endif %}>
           <span class="day-face">
             {{ tag(d.date, "tag--lg") }}
-            <span class="day-stats">
-              <span class="day-money">{% if d.dollars is not none %}{{ d.dollars|money }}{% else %}{{ d.flags }} flags{% endif %}</span>
-              <span class="day-sub">{% if d.dollars is not none %}retail $ at risk · {% endif %}{{ d.rows }} rows · {{ d.flags }} open flags</span>
-            </span>
+            {{ day_stats(d) }}
           </span>
         </label>
         {% endfor %}
@@ -29,10 +26,7 @@
         {% for d in days %}
         <div class="shelf">
           {{ tag(d.date, "tag--lg") }}
-          <span class="day-stats">
-            <span class="day-money">{% if d.dollars is not none %}{{ d.dollars|money }}{% else %}{{ d.flags }} flags{% endif %}</span>
-            <span class="day-sub">{% if d.dollars is not none %}retail $ at risk · {% endif %}{{ d.rows }} rows · {{ d.flags }} open flags</span>
-          </span>
+          {{ day_stats(d) }}
         </div>
         {% endfor %}
         <div id="carried-in" class="carried-in">{% include "_carried_in.html" %}</div>

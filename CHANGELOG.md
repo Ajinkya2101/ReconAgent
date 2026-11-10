@@ -6,6 +6,20 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+### Added: the worklist tells the truth about progress and hand-off
+- **Decisions move the money.** Each sales day shows what is still at risk (each SKU's largest open flag)
+  and what has been accepted and decided so far; a decision updates the shelf at once. The Decided tab
+  counts flags, not rows.
+- **Rank moves are explained.** After a decision the detail says why the row moved: it now ranks on its
+  next open flag, and the rule's new confidence re-ranks its flags on other rows.
+- **Handed over.** A new view collects open work someone has already touched: shift notes, other
+  people's claims, and High flags acknowledged but not yet decided.
+- **Since your last sign-in.** The briefing lists new flags and what others decided, noted, claimed or
+  acknowledged since the reader's previous sign-in.
+- **Acknowledge first.** While a High flag on a SKU waits for acknowledgment, every Accept on that SKU
+  steps back to an outline. No empty view or filter says "Every SKU reconciles" while flags are open.
+- Top actions are grouped one line per SKU; the view tabs have short labels on phones.
+
 ### Fixed: counts read "1 unit", never "1 units"
 - Recommendations, accountability records and write-back proposals put the noun in the right number
   (`detectors._units`).

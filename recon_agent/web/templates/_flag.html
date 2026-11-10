@@ -4,11 +4,15 @@
 {% set nar = store.res.narration.by_id.get(f.id, {}) %}
 {% set a = store.ack_state(f) %}
 {% set d = store.decision(f) %}
+{% set d_at = store.decided_at.get(f.id) %}
 {% set fid = f.id|urlencode %}
 {% set hid = "flag-" ~ f.id|replace(" ", "-") ~ "-h" %}
 {% set acc = f.accountability %}
 {% set by_ai = f.id in store.ai_ids %}
 {% set awaiting_ack = a.state in ("due", "overdue") %}
+{#- While any High flag on this SKU waits, acknowledging is the one primary act: every Accept and
+    Approve on the SKU steps back to an outline, not only the High flag's own. -#}
+{% set row_waiting = store.pending_acks(row)|length > 0 %}
 {% set carry_L = ledger(row) if f.rule in config.CARRY_FORWARD_RULES else none %}
 {% set carries = carry_L and carry_L.surplus %}
 <section class="flag{% if f.status != 'Open' %} is-decided{% endif %}" aria-labelledby="{{ hid }}">
@@ -16,7 +20,7 @@
     {{ severity(f.severity) }}
     <span class="code flag-rule">{{ f.rule }}</span>
     <h4 id="{{ hid }}" tabindex="-1">{{ f.title }}</h4>
-    <span class="flag-qty"><b>{{ f.units|abs|num }}</b> units · {{ money_or_dash(f.dollars) }}</span>
+    <span class="flag-qty"><b>{{ f.units|abs|num }}</b> {{ "unit" if f.units|abs|round == 1 else "units" }} · {{ money_or_dash(f.dollars) }}</span>
   </header>
 
   <p class="flag-explain"><span class="src">{{ "AI explanation · " ~ config.OCI_MODEL_ID if by_ai else "From the rules" }}</span>{{ f.narrative or f.recommendation }}</p>
@@ -24,7 +28,7 @@
   <p class="flag-origin">
     <span>Started in {% if acc.origin == "Undetermined" %}<b>an undetermined system</b>{% else %}<b class="code">{{ acc.origin }}</b>{% if acc.handoff %}, at the {{ acc.handoff }} hand-off{% endif %}{% endif %}</span>
     <span>{{ acc.failure_type }}</span>
-    <span>{{ acc.impact }}{% if acc.impact_units %} · {{ acc.impact_units|num }} units{% endif %}</span>
+    <span>{{ acc.impact }}{% if acc.impact_units %} · {{ acc.impact_units|units }}{% endif %}</span>
   </p>
   {% endif %}
 
@@ -46,11 +50,13 @@
     <p class="decide-warn">{{ row.claim.user }} claimed this {{ "SKU" if row.sku else "row" }} at {{ row.claim.at|hm }}. Deciding here records your name, not theirs.</p>
     {% endif %}
     <div class="decide-actions">
-      {# Until a High flag is acknowledged, acknowledging is the primary act; Accept steps back. #}
-      <button class="btn{% if not awaiting_ack %} btn--primary{% endif %}" name="decision" value="accept" data-accept{% if carries %} data-carry-accept{% endif %}>{{ icon("check") }}Accept</button>
-      <span class="decide-hint">
-        {%- if carries -%}
-        Carries {{ f.units|abs|num }} units {{ tag(row.sales_date, "tag--xs") }} {{ icon("arrow") }} {{ tag(carry_L.next_day, "tag--xs") }}, corrected in MIPS
+      <button class="btn{% if not row_waiting %} btn--primary{% endif %}" name="decision" value="accept" aria-describedby="{{ hid }}-hint" data-accept{% if carries %} data-carry-accept{% endif %}>{{ icon("check") }}Accept</button>
+      <button class="btn btn--reject" name="decision" value="reject" data-reject>{{ icon("x") }}Reject</button>
+    </div>
+    <p class="decide-hint" id="{{ hid }}-hint">
+      {%- if row_waiting %}<b>Acknowledge the High {{ "flag" if store.pending_acks(row)|length == 1 else "flags" }} first.</b> {% endif -%}
+      {%- if carries -%}
+        Carries {{ f.units|units }} {{ tag(row.sales_date, "tag--xs") }} {{ icon("arrow") }} {{ tag(carry_L.next_day, "tag--xs") }}, corrected in MIPS
         {%- else -%}
         {%- set prop = store.proposal(f) -%}
         {%- set fix = prop.system if prop else (f.systems[0] if f.systems else "") -%}
@@ -59,9 +65,7 @@
         {%- if acc.origin == "Integration" and acc.handoff %}; it started at the {{ acc.handoff }} hand-off{% else %}; it started in {{ acc.origin }}{% endif -%}
         {%- endif -%}
         {%- endif -%}
-      </span>
-      <button class="btn btn--reject" name="decision" value="reject" data-reject>{{ icon("x") }}Reject</button>
-    </div>
+    </p>
     <details class="decide-note">
       <summary>{{ icon("note") }}Add a note to this decision</summary>
       <label class="note"><span class="sr">Note for the next shift</span>
@@ -70,9 +74,10 @@
   </form>
   {% else %}
   <div class="decided">
-    <p><b>{{ "Accepted" if f.status == ACCEPTED else "Rejected" }}</b>{% if d %} by {{ d.by or "someone" }}{% if d.at %} at {{ d.at[11:16] }}{% endif %}{% endif %}
+    <p><b>{{ "Accepted" if f.status == ACCEPTED else "Rejected" }}</b>{% if d %} by {{ d.by or "someone" }}{% if d_at %} at {{ d_at.at|hm }}{% elif d.at %} at {{ d.at[11:16] }}{% endif %}{% endif %}
       · {{ "awaiting correction in the source system; closes when the feed shows it" if f.status == ACCEPTED else "rule confidence lowered; hidden next run while the quantity is unchanged" }}</p>
-    {% if f.status == ACCEPTED and carry_L %}<p class="carry-line{% if retag_now %} retag-now{% endif %}">Carry {{ f.units|abs|num }} units {{ tag(row.sales_date, "tag--xs") }} {{ icon("arrow") }} <span class="carry-to">{{ tag(carry_L.next_day, "tag--xs") }}</span> next sales day</p>{% endif %}
+    {% if f.status == ACCEPTED and carry_L %}<p class="carry-line{% if retag_now %} retag-now{% endif %}">Carry {{ f.units|units }} {{ tag(row.sales_date, "tag--xs") }} {{ icon("arrow") }} <span class="carry-to">{{ tag(carry_L.next_day, "tag--xs") }}</span> next sales day</p>{% endif %}
+    {% if moved and moved.flag == f.id %}<p class="rank-move">{{ moved.said }}</p>{% endif %}
     {% if d and d.note %}<p class="decided-note">“{{ d.note }}”</p>{% endif %}
     <details class="change">
       <summary>{{ icon("down") }}Change decision</summary>
@@ -98,7 +103,7 @@
     {% if acc %}
     <section class="acct" aria-label="System accountability">
       <dl class="acct-head">
-        <div><dt>Impact</dt><dd>{{ acc.impact }}{% if acc.impact_units %} · {{ acc.impact_units|num }} units{% endif %}</dd></div>
+        <div><dt>Impact</dt><dd>{{ acc.impact }}{% if acc.impact_units %} · {{ acc.impact_units|units }}{% endif %}</dd></div>
         <div><dt>Started in</dt><dd>{% if acc.origin == "Undetermined" %}Undetermined{% else %}<span class="code">{{ acc.origin }}</span>{% endif %}{% if acc.handoff %} <small>{{ acc.handoff }}</small>{% endif %}</dd></div>
         <div><dt>Failure</dt><dd>{{ acc.failure_type }}</dd></div>
         <div><dt>Attribution</dt><dd>{{ acc.basis|capitalize }}</dd></div>

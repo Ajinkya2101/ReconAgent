@@ -1,7 +1,10 @@
 {# The open queue is empty. Say why: no data has arrived yet is not the same as everything reconciles. #}
 {% set checked_skus = store.res.kpis.skus_reconciled %}
 {% set live = store.feed.mode == "events" %}
-{% if not checked_skus %}
+{% set n_open = store.rows.values()|selectattr("is_open")|list|length %}
+{% if n_open %}
+<p><b>Nothing to show here · {{ n_open }} open.</b> <a href="/">Show the open queue</a></p>
+{% elif not checked_skus %}
 <p><b>Waiting for the first data.</b>
   {% if live %}The feed is at event #{{ store.feed.seq }}. Rows appear here as MIPS, ODI and WMS publish.
   {% else %}No BUSS, Oracle, MIPS, ODI or WMS rows are loaded yet. Rows appear here when the source workbook loads.{% endif %}

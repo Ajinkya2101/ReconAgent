@@ -111,7 +111,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .chip .icon { width: 13px; height: 13px; stroke-width: 2; }
 .chip--due { box-shadow: inset 0 0 0 1px var(--ink); }
 .chip--overdue { background: var(--ink); color: #fff; }
-.chip--claim, .chip--note, .chip--carry { background: var(--raised); box-shadow: inset 0 0 0 1px var(--rule-2); color: var(--ink-2); }
+.chip--claim, .chip--note, .chip--carry, .chip--acked { background: var(--raised); box-shadow: inset 0 0 0 1px var(--rule-2); color: var(--ink-2); }
 .chip--carry { padding-right: 3px; }
 .kbd, .keys kbd { font: 600 11px var(--mono); padding: 1px 5px; border: 1px solid var(--control); border-radius: 3px; color: var(--ink-3); }
 
@@ -132,10 +132,11 @@ h1, h2, h3, h4, p { margin: 0; }
 .asof-mode { font-weight: 650; color: var(--ink); padding-right: 12px; border-right: 1px solid var(--rule-2); }
 .asof-detail { display: inline-flex; align-items: center; gap: 6px; }
 .asof-short { display: none; }
+.sim-short, .reset-short { display: none; }
 .sim-badge { display: inline-block; margin-right: 8px; padding: 1px 6px; border: 1px solid var(--ink); border-radius: var(--radius); font-family: var(--mono); font-size: var(--t-xs); font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); }
 .strip-changes { flex: none; display: flex; align-items: center; font-size: var(--t-sm); }
 .changes { display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
-.changes-checked { color: var(--ink-3); }
+.changes:empty { display: none; }
 .changes-pill { display: inline-flex; align-items: center; text-decoration: none; border: 0; border-radius: 2px; background: var(--ink); color: #fff; font-size: var(--t-xs); font-weight: 650; height: 24px; padding: 0 9px; cursor: pointer; }
 .strip-actions { display: flex; align-items: center; gap: 4px; }
 .strip-reset { display: flex; }
@@ -163,14 +164,18 @@ h1, h2, h3, h4, p { margin: 0; }
 .briefing .src { white-space: nowrap; }
 .briefing-lede { margin-top: 4px; max-width: 80ch; font-size: var(--t-sm); color: var(--ink-2); text-wrap: pretty; }
 .briefing .btn { margin-left: auto; align-self: center; }
-.briefing.is-read .briefing-lede, .briefing.is-read .briefing-body, .briefing.is-read [data-briefing-read] { display: none; }
+.since { margin-top: 4px; max-width: 80ch; font-size: var(--t-sm); color: var(--ink); text-wrap: pretty; }
+.since a { font-weight: 650; margin-left: 4px; white-space: nowrap; }
+.briefing-gap { margin-top: 2px; max-width: 80ch; font-size: var(--t-xs); color: var(--ink-3); text-wrap: pretty; }
+.briefing-body > .briefing-gap { margin-top: 6px; }
+.actions .more { color: var(--ink-3); }
+.briefing.is-read .briefing-lede, .briefing.is-read .briefing-gap, .briefing.is-read .briefing-body, .briefing.is-read [data-briefing-read] { display: none; }
 .briefing:not(.is-read) [data-briefing-reopen] { display: none; }
 .briefing-body { padding: 10px 0 4px; max-width: 72ch; }
 .briefing-body > p { color: var(--ink-2); }
 .briefing-body h3 { font-size: var(--t-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin: 16px 0 6px; }
 .actions { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: var(--t-sm); color: var(--ink-2); }
 .actions .code { font-weight: 700; color: var(--ink); margin-right: 4px; }
-.table-note { margin-top: -10px; max-width: 72ch; font-size: var(--t-xs); color: var(--ink-3); }
 
 /* ---- Day strip ------------------------------------------------------- */
 .filters { margin: 0; }
@@ -192,18 +197,21 @@ h1, h2, h3, h4, p { margin: 0; }
 .day-stats { display: grid; line-height: 1.2; }
 .day-money { font-size: var(--t-xl); font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; }
 .day-sub { font-size: var(--t-xs); color: var(--ink-3); white-space: nowrap; }
+.day-decided { margin-top: 2px; font-size: var(--t-xs); color: var(--ink-2); white-space: nowrap; }
+.day-decided b { font-weight: 650; color: var(--ink); }
 
 /* ---- Toolbar ---------------------------------------------------------- */
-.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--ink); }
-.views { display: flex; gap: 2px; margin: 0; padding: 0; border: 0; overflow-x: auto; scrollbar-width: none; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; padding-bottom: 10px; border-bottom: 1px solid var(--ink); }
+.views { display: flex; gap: 2px; margin: 0; padding: 0; border: 0; flex: none; max-width: 100%; overflow-x: auto; scrollbar-width: none; }   /* tabs never scroll out of view: the search wraps first */
 .view { position: relative; flex: none; cursor: pointer; }
-.view span { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: var(--radius); font-size: var(--t-sm); font-weight: 600; color: var(--ink-2); }
-.view:hover span { background: var(--hover); }
+.view > span { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: var(--radius); font-size: var(--t-sm); font-weight: 600; color: var(--ink-2); }
+.view:hover > span { background: var(--hover); }
 .view input:checked + span { background: var(--ink); color: #fff; }
 .view input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 2px; }
 .view-count { font-weight: 700; font-size: var(--t-xs); opacity: 0.8; }
-.toolbar-end { display: flex; align-items: center; gap: 4px; flex: 0 1 284px; min-width: 0; }
-.search { position: relative; display: flex; align-items: center; flex: 1 1 240px; min-width: 140px; }
+.view .view-short { display: none; }
+.toolbar-end { display: flex; align-items: center; gap: 4px; flex: 1 1 200px; max-width: 284px; min-width: 0; margin-left: auto; }
+.search { position: relative; display: flex; align-items: center; flex: 1 1 240px; min-width: 0; }
 .search .icon { position: absolute; left: 9px; color: var(--ink-3); pointer-events: none; }
 .search .kbd { position: absolute; right: 8px; pointer-events: none; }
 .search input { width: 100%; height: 34px; padding: 0 30px 0 34px; border: 1px solid var(--control); border-radius: var(--radius); background: var(--raised); }
@@ -223,8 +231,11 @@ h1, h2, h3, h4, p { margin: 0; }
 .row-link:hover { background: var(--hover); }
 .row-link:focus-visible { outline-offset: -2px; }
 .row.is-current .row-link { background: var(--raised); box-shadow: inset 0 0 0 1px var(--rule-2); }
+/* The top row picked on a full page load: shown in the desktop detail column, so marked there only. */
+@media (min-width: 1100px) { .row.is-auto .row-link { background: var(--raised); box-shadow: inset 0 0 0 1px var(--rule-2); } }
 .rows.has-tags .row-link { grid-template-columns: 104px minmax(0, 1fr) auto; grid-template-areas: "tag id money" "tag second chips"; }
 .row-tag { grid-area: tag; align-self: start; padding-top: 1px; }
+.row-moved { flex: none; font-size: var(--t-xs); font-weight: 600; color: var(--ink-2); white-space: nowrap; }
 .row-rank { flex: none; min-width: 2.2ch; font: 600 var(--t-xs) var(--mono); color: var(--ink-3); text-align: right; }
 .plant { font-weight: 700; }
 .row-id { grid-area: id; display: flex; align-items: baseline; gap: 8px; min-width: 0; }
@@ -264,6 +275,10 @@ h1, h2, h3, h4, p { margin: 0; }
 .detail-money { grid-area: money; display: grid; justify-items: end; align-content: end; text-align: right; }
 .detail-dollars { font-size: var(--t-3xl); font-weight: 650; letter-spacing: -0.025em; line-height: 1.05; }
 .detail-dollars .no-money { font-size: var(--t-lg); }
+.detail-dollars small { font-size: var(--t-lg); font-weight: 600; letter-spacing: 0; }
+.detail-accepted { margin-top: 8px; font-size: var(--t-sm); color: var(--ink-2); }
+.detail-accepted b { font-size: var(--t-lg); font-weight: 650; color: var(--ink); }
+.detail-accepted small { display: block; font-size: var(--t-xs); color: var(--ink-3); }
 .detail-cap { font-size: var(--t-xs); color: var(--ink-3); margin-top: 4px; }
 .claim { grid-area: claim; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .claim-note { font-size: var(--t-xs); color: var(--ink-3); }
@@ -360,7 +375,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .acct-head div { display: flex; gap: 5px; align-items: baseline; }
 .acct-head dt { color: var(--ink-3); }
 .acct-head dd { margin: 0; font-weight: 650; color: var(--ink); }
-.acct-head small { font-weight: 600; color: var(--ink-3); }
+.acct-head small { font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); }
 .acct-point { margin-top: 4px; font-size: var(--t-sm); color: var(--ink-2); }
 .acct-systems { width: 100%; margin-top: 8px; border-collapse: collapse; font-size: var(--t-sm); }
 .acct-systems th, .acct-systems td { padding: 5px 8px 5px 0; border-top: 1px solid var(--rule); text-align: left; vertical-align: top; }
@@ -402,7 +417,10 @@ h1, h2, h3, h4, p { margin: 0; }
 .note textarea::placeholder { color: var(--ink-3); }
 .note textarea:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: var(--ink); }
 .decide-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.decide-hint { flex: 1 1 14em; min-width: 0; font-size: var(--t-xs); color: var(--ink-3); }
+.decide-hint { min-width: 0; max-width: 70ch; font-size: var(--t-xs); color: var(--ink-3); }
+.decide > .decide-hint { margin-top: -4px; }
+.decide-hint b { font-weight: 650; color: var(--ink); }
+.rank-move { margin-top: 6px; color: var(--ink-2); max-width: 70ch; }
 .decide-actions .btn--reject { margin-left: auto; }  /* Reject sits apart from Accept */
 .decide-hint .tag { vertical-align: -4px; }
 .decide-hint .icon { width: 13px; height: 13px; vertical-align: -2px; }
@@ -555,8 +573,10 @@ h1, h2, h3, h4, p { margin: 0; }
   .keys-btn { display: none; }
   /* The account and assistant go to icons so the freshness line keeps its room. */
   .strip { gap: 14px; }
-  .who-name, .who-role, .changes-checked { display: none; }   /* the as-of time already says how fresh */
+  .who-name, .who-role { display: none; }
   .strip-actions .btn--quiet > span:not(.sr) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }   /* still the button's name */
+  /* Reset is destructive for everyone: it keeps a word, so it never reads as "refresh". */
+  .strip-actions .btn--quiet > span.reset-short { position: static; width: auto; height: auto; overflow: visible; clip: auto; display: inline; }
 }
 @media (max-width: 719px) {
   :root { --gutter: 16px; --strip-h: 88px; }
@@ -564,21 +584,27 @@ h1, h2, h3, h4, p { margin: 0; }
   .strip { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "mark actions" "asof changes"; align-content: center; gap: 0 10px; padding-block: 4px; }
   .strip-mark { grid-area: mark; justify-self: start; font-size: var(--t-md); }
   .strip-actions { grid-area: actions; }
-  .strip-asof { grid-area: asof; }
-  .strip-changes { grid-area: changes; justify-self: end; }
+  .strip-asof { grid-row: 2; grid-column: 1 / -1; }
+  .strip-changes { grid-row: 2; grid-column: 2; justify-self: end; }
   .pill-wide { display: none; }
   .asof-mode { border: 0; padding: 0; font-size: var(--t-xs); }
   .asof-long { display: none; }
   .asof-short { display: inline; }
-  .views { flex-wrap: wrap; overflow: visible; }
+  /* The badge shortens so the as-of tag and time always fit beside it. */
+  .sim-long, .view-long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }   /* still the name */
+  .sim-short, .view .view-short { display: inline; }
+  .sim-badge { margin-right: 6px; }
+  /* Even tabs: one aligned grid, short labels that start each tab's full name. */
+  .views { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; overflow: visible; }
+  .view > span { justify-content: center; width: 100%; padding: 0 6px; }
   .day:not(.day--all) { flex: 1 1 100%; min-width: 0; }
   .day-sub { white-space: normal; }
   .days { padding-top: 16px; }
-  .changes-checked, .who-name, .who-role, .strip-claims { display: none; }  /* claims stay one tap away in the Claimed by me tab */
+  .who-name, .who-role, .strip-claims { display: none; }  /* claims stay one tap away in the Claimed by me tab */
   .briefing-lede { display: none; }
   .queue-head-money { display: none; }
   .toolbar { flex-direction: column; align-items: stretch; gap: 10px; }
-  .toolbar-end { flex: none; }
+  .toolbar-end { flex: none; max-width: none; margin-left: 0; }
   .search { flex-basis: auto; }
   .search .kbd { display: none; }
   .row-link, .rows.has-open .row:not(.is-current) .row-link { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id money" "second chips"; row-gap: 6px; }
@@ -612,7 +638,7 @@ h1, h2, h3, h4, p { margin: 0; }
 @media (pointer: coarse) {
   .btn, .btn--sm { min-height: 44px; }
   .btn--icon { width: 44px; }
-  .view span, .search input { height: 44px; }
+  .view > span, .search input { height: 44px; }
   .strip-mark { display: inline-flex; align-items: center; min-height: 44px; }
   :is(.decide-note, .flag-work, .note-add, .change) > summary, .sources summary { min-height: 44px; }
   .keys-btn { display: none; }

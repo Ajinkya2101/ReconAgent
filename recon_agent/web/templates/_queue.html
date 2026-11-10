@@ -12,6 +12,8 @@
   <p><b>No High flags are waiting for acknowledgment.</b> High flags must be acknowledged within {{ config.HIGH_ACK_MINUTES }} minutes of being raised; they appear here until someone does.</p>
   {% elif view == "mine" %}
   <p><b>You haven't claimed anything.</b> Claim a SKU from its detail so other supervisors can see you're working it.</p>
+  {% elif view == "handed" %}
+  <p><b>Nothing has been handed over.</b> Rows appear here when someone leaves a shift note, claims a SKU, or acknowledges a High flag without deciding it.</p>
   {% elif view == "decided" %}
   <p><b>Nothing decided yet.</b> Accepted and rejected flags collect here, with who decided and when.</p>
   {% else %}

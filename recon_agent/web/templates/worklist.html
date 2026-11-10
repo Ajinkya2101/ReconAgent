@@ -24,9 +24,9 @@
         <fieldset class="views">
           <legend class="sr">Show</legend>
           {% for v, label in VIEWS.items() %}
-          <label class="view">
+          <label class="view"{% if v == "decided" %} title="Flags decided, not rows"{% endif %}>
             <input type="radio" name="view" value="{{ v }}" {% if view == v %}checked{% endif %}>
-            <span>{{ label }} <b class="view-count" id="count-{{ v }}">{{ counts[v] }}</b></span>
+            <span>{% if v in VIEW_SHORT %}<span class="view-long">{{ label }}</span><span class="view-short" aria-hidden="true">{{ VIEW_SHORT[v] }}</span>{% else %}{{ label }}{% endif %} <b class="view-count" id="count-{{ v }}">{{ counts[v] }}</b></span>
           </label>
           {% endfor %}
         </fieldset>
@@ -47,13 +47,20 @@
       <span class="queue-head-money" aria-hidden="true">Largest flag $</span>
     </div>
     <p class="sr" role="status" id="queue-status"></p>
+    <span id="rank-map" hidden></span>
     <div id="queue" class="queue">
       {% include "_queue.html" %}
     </div>
   </main>
 
   <section id="detail" class="detail-col" aria-label="SKU detail" tabindex="-1">
-    {% if selected %}{% set row = selected %}{% include "_detail.html" %}{% else %}
+    {% if selected %}{% set row = selected %}{% include "_detail.html" %}{% elif counts.all %}
+    {# The view or filter is empty, not the queue: never an all-clear while flags are open. #}
+    <div class="detail-empty">
+      <p><b>Pick a SKU from the queue · {{ counts.all }} open.</b>
+        {% if view != "all" or q or day %}<a href="/">Show the open queue</a>{% endif %}</p>
+    </div>
+    {% else %}
     <div class="detail-empty">{% include "_nodata.html" %}</div>
     {% endif %}
   </section>

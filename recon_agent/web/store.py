@@ -82,6 +82,26 @@ class Row:
         return max(f.dollars for f in (self.open_flags or self.flags))
 
     @property
+    def at_risk(self) -> float:
+        """Money still at risk: the largest open flag, counted once per SKU like the engine's total."""
+        return max((f.dollars for f in self.open_flags), default=0.0)
+
+    @property
+    def decided_flags(self) -> list[Finding]:
+        return [f for f in self.flags if f.status != "Open"]
+
+    @property
+    def accepted_dollars(self) -> float:
+        """Each accepted flag's own retail $, added up. Flags on one SKU can describe the same units,
+        so this is not deduplicated, and the screen says so wherever it shows it."""
+        return sum(f.dollars for f in self.flags if f.status == ACCEPTED)
+
+    @property
+    def lead_units(self) -> float:
+        """Units on the most important open flag: what a row with no retail value leads with."""
+        return abs(self.top.units)
+
+    @property
     def severity(self) -> str:
         pool = self.open_flags or self.flags
         return max(pool, key=lambda f: SEVERITY_RANK[f.severity]).severity
@@ -110,6 +130,10 @@ class Store:
     # they live in memory: they are for the next shift, not a record of the decision.
     notes: dict[str, list[dict]] = field(default_factory=dict)
     briefing_read: dict[str, str] = field(default_factory=dict)   # user -> briefing id they marked read
+    # Plant-clock times of each person's sign-ins, the last two. Shift boundaries are not confirmed
+    # yet, so "what changed while you were away" is measured from the sign-in before this one.
+    signins: dict[str, list[dt.datetime]] = field(default_factory=dict)
+    decided_at: dict[str, dict] = field(default_factory=dict)   # flag id -> {"user", "at"} on the plant clock
     first_seen: dict[str, dt.datetime] = field(default_factory=dict)
     rows: dict[str, Row] = field(default_factory=dict)
     narration_state: str = "rules"   # rules | pending | ai | failed
@@ -170,7 +194,10 @@ class Store:
                 p = self.res.positions.get(flags[0].sku) if flags[0].sku else None
                 rows[key] = Row(key=key, sku=flags[0].sku, description=flags[0].description,
                                 sales_date=p.sales_date if p and p.sales_date else self.sales_date,
-                                flags=sorted(flags, key=lambda f: f.priority, reverse=True),
+                                # A carry-forward moves stock on the figures the other flags
+                                # question, so those are checked first: carries come last.
+                                flags=sorted(flags, key=lambda f: (f.rule in config.CARRY_FORWARD_RULES,
+                                                                   -f.priority)),
                                 position=p, claim=self.claims.get(key))
             self.rows = rows
             after = {k: fingerprint(r) for k, r in rows.items()}
@@ -346,6 +373,7 @@ class Store:
             self.claims.clear()
             self.acks.clear()
             self.notes.clear()
+            self.decided_at.clear()
             self.briefing_read.clear()
             self.first_seen.clear()
             self.rows = {}
@@ -378,21 +406,36 @@ class Store:
                 continue
             if view == "mine" and not (r.claim and r.claim["user"] == user):
                 continue
-            if view == "decided" and r.is_open:
+            if view == "handed" and not self.handed_over(r, user):
+                continue
+            if view == "decided" and not r.decided_flags:   # any decided flag: the tab counts flags
                 continue
             if view == "all" and not r.is_open:
                 continue
             out.append(r)
         return sorted(out, key=lambda r: r.priority, reverse=True)
 
+    def handed_over(self, r: Row, user: str = "") -> bool:
+        """Open work someone has already touched without finishing it: a shift note, a claim held by
+        someone else, or a High flag acknowledged but not yet decided."""
+        if not r.is_open:
+            return False
+        return bool(self.notes.get(r.key)) or bool(r.claim and r.claim["user"] != user) \
+            or any(f.id in self.acks for f in r.open_flags)
+
     def days(self) -> list[dict]:
-        by_day: dict[dt.date, list[Row]] = {}
-        for r in self.rows.values():
-            if r.is_open:
-                by_day.setdefault(r.sales_date, []).append(r)
-        return [{"date": d, "rows": len(rs), "flags": sum(len(r.open_flags) for r in rs),
-                 "dollars": self.res.kpis["dollar_exposure"] if d == self.sales_date else None}
-                for d, rs in sorted(by_day.items())]
+        """Each sales day with open work, oldest first."""
+        return [self.day_summary(d) for d in sorted({r.sales_date for r in self.rows.values() if r.is_open})]
+
+    def day_summary(self, d: dt.date) -> dict:
+        """One sales day: money still at risk (each SKU's largest open flag, as the engine counts it)
+        and what has been accepted and decided so far, so a decision visibly moves the shelf."""
+        rows = [r for r in self.rows.values() if r.sales_date == d]
+        open_rows = [r for r in rows if r.is_open]
+        return {"date": d, "rows": len(open_rows), "flags": sum(len(r.open_flags) for r in open_rows),
+                "dollars": sum(r.at_risk for r in open_rows),
+                "decided": sum(len(r.decided_flags) for r in rows),
+                "accepted": sum(r.accepted_dollars for r in rows)}
 
     def ranks(self) -> dict[str, int]:
         """Each open row's place in the priority order of the whole open queue (1 = first).
@@ -424,7 +467,47 @@ class Store:
                 "ack": sum(1 for r in self.rows.values()
                            if any(self.ack_state(f)["state"] in ("due", "overdue") for f in r.flags)),
                 "mine": sum(1 for r in self.rows.values() if r.claim and r.claim["user"] == user),
-                "decided": sum(1 for r in self.rows.values() if not r.is_open)}
+                "handed": sum(1 for r in self.rows.values() if self.handed_over(r, user)),
+                "decided": sum(len(r.decided_flags) for r in self.rows.values())}   # flags, not rows
+
+    def signed_in(self, user: str) -> None:
+        self.signins[user] = (self.signins.get(user, []) + [self.now()])[-2:]
+
+    def since_last_signin(self, user: str) -> dict | None:
+        """What other people and the feed did since this person's previous sign-in, or None when
+        there is no previous sign-in on record (first sign-in since the worklist started)."""
+        times = self.signins.get(user, [])
+        if len(times) < 2:
+            return None
+        since = times[0]
+        open_flags = [f for r in self.rows.values() for f in r.open_flags]
+        # Other people's actions count from the sign-in second itself (the plant clock has whole
+        # seconds); flags count as new only when raised after it.
+        return {
+            "at": since,
+            "new": sum(1 for f in open_flags if self.first_seen.get(f.id, since) > since),
+            "decided": sum(1 for d in self.decided_at.values() if d["user"] != user and d["at"] >= since),
+            "notes": sum(1 for ns in self.notes.values() for n in ns if n["user"] != user and n["at"] >= since),
+            "claims": sum(1 for c in self.claims.values() if c["user"] != user and c["at"] >= since),
+            "acks": sum(1 for a in self.acks.values() if a["user"] != user and a["at"] >= since),
+        }
+
+    def since_line(self, user: str) -> dict | None:
+        """The briefing's "since your last sign-in" line, as its parts."""
+        s = self.since_last_signin(user)
+        if s is None:
+            return None
+
+        def n(k: int, one: str, many: str) -> str:
+            return f"{k} {one if k == 1 else many}"
+
+        parts = [p for k, p in (
+            (s["new"], n(s["new"], "new flag", "new flags")),
+            (s["decided"], n(s["decided"], "flag decided by others", "flags decided by others")),
+            (s["notes"], n(s["notes"], "shift note", "shift notes")),
+            (s["claims"], n(s["claims"], "claim", "claims")),
+            (s["acks"], n(s["acks"], "High flag acknowledged", "High flags acknowledged"))) if k]
+        return {"at": s["at"], "parts": parts}
 
     def find(self, flag_id: str) -> tuple[Row, Finding]:
         for r in self.rows.values():
@@ -510,6 +593,7 @@ class Store:
             row, f = self.find(flag_id)
             state = feedback.record(f.id, round(f.units, 2), decision, note.strip(), by=user)
             self.decisions = state["decisions"]
+            self.decided_at[f.id] = {"user": user, "at": self.now()}
             f.status = ACCEPTED if decision == "accept" else REJECTED
             # The agent learns: every flag of this rule re-ranks on the new confidence.
             for r in self.rows.values():

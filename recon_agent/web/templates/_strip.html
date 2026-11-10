@@ -4,14 +4,14 @@
   {# Freshness stays on screen at every width: the long form shrinks to tag and time, never to nothing. #}
   <p class="strip-asof">
     {% if store.feed.mode == "events" %}
-    <span class="asof-mode"><span class="sim-badge" title="Synthetic data from the event simulator. No plant data.">Simulation</span><span class="asof-long">Live feed</span></span>
+    <span class="asof-mode"><span class="sim-badge" title="Synthetic data from the event simulator. No plant data."><span class="sim-long">Simulation</span><span class="sim-short" aria-hidden="true">Sim</span></span><span class="asof-long">Live feed</span></span>
     {% else %}
     <span class="asof-mode"><span class="asof-long">Source workbook, not live</span><span class="asof-short">Not live</span></span>
     {% endif %}
-    {% include "_asof.html" %}
+    {% set checked = store.now() %}{% include "_asof.html" %}
   </p>
   <div class="strip-changes">
-    {% set since = version %}{% set keys = [] %}{% set checked = store.loaded_at %}
+    {% set since = version %}{% set keys = [] %}
     {% include "_changes.html" %}
   </div>
   <nav class="strip-actions" aria-label="Account and assistant">
@@ -19,7 +19,7 @@
     {% if store.feed.mode == "events" %}
     <form class="strip-reset" method="post" action="/simulation/reset" hx-post="/simulation/reset"
           hx-confirm="Reset the simulation to the starting day? This clears every change, scenario, fault, decision, claim, acknowledgment and shift note, for everyone, and re-publishes the synthetic seed.">
-      <button class="btn btn--quiet" type="submit" title="Reset the simulation to the starting day">{{ icon("refresh") }}<span>Reset simulation</span></button>
+      <button class="btn btn--quiet" type="submit" title="Reset the simulation to the starting day">{{ icon("reset") }}<span>Reset simulation</span><span class="reset-short" aria-hidden="true">Reset</span></button>
     </form>
     {% endif %}
     <button type="button" class="btn btn--quiet" data-assistant aria-controls="assistant" aria-expanded="false">{{ icon("chat") }}<span>Ask</span></button>

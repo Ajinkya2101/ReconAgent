@@ -8,7 +8,7 @@
   function markOpen(key) {
     const layout = $("#layout"), rows = $("#rows"), open = $("#open-key");
     if (!layout) return;
-    $$(".row.is-current").forEach((r) => r.classList.remove("is-current"));
+    $$(".row.is-current, .row.is-auto").forEach((r) => r.classList.remove("is-current", "is-auto"));
     $$(".row-link[aria-current]").forEach((a) => a.removeAttribute("aria-current"));
     if (key) {
       const row = $("#row-" + CSS.escape(key));
@@ -19,6 +19,17 @@
     layout.classList.toggle("has-detail", !!key);
     if (open) open.value = key || "";
   }
+
+  // The top row picked on a full page load is in the detail column only on desktop; on tablet and
+  // phone no detail is open, so it is not the current row there.
+  function syncAuto() {
+    const auto = $(".row.is-auto .row-link");
+    if (!auto) return;
+    if (wide()) auto.setAttribute("aria-current", "true");
+    else auto.removeAttribute("aria-current");
+  }
+  syncAuto();
+  window.matchMedia("(min-width: 1100px)").addEventListener("change", syncAuto);
 
   function closeDetail() {
     const key = $("#open-key")?.value;
@@ -85,7 +96,13 @@
     } else {
       const target = (refocus && document.getElementById(refocus)) || $("#detail-h");
       target?.focus({ preventScroll: true });
-      target?.scrollIntoView({ block: "nearest" });
+      // An accepted carry re-tags the surplus on the track at the top of the detail. When the flag
+      // sits further down, bring the track into view so the move is seen, not missed.
+      const track = $(".retag-now", e.detail.target) && $(".track", e.detail.target);
+      if (track) {
+        const box = track.getBoundingClientRect(), pane = e.detail.target.getBoundingClientRect();
+        if (box.top < pane.top || box.bottom > pane.bottom) track.scrollIntoView({ block: "center" });
+      } else target?.scrollIntoView({ block: "nearest" });
     }
     refocus = null;
   });
@@ -158,6 +175,19 @@
     }, 150);
   }
   document.body.addEventListener("htmx:afterSettle", () => { if ($("#changes [data-live-refresh]")) liveRefresh(); });
+  // After a decision the server sends every row's new rank: renumber the rows on screen, so no two
+  // rows show the same place while the queue waits for its next redraw.
+  document.body.addEventListener("htmx:oobAfterSwap", (e) => {
+    if (e.detail.target?.id !== "rank-map") return;
+    let ranks = {};
+    try { ranks = JSON.parse($("#rank-map")?.dataset.ranks || "{}"); } catch { return; }
+    $$(".row").forEach((row) => {
+      const n = ranks[row.id.slice(4)], el = $(".row-rank", row);
+      if (!el || !n) return;
+      el.lastChild.textContent = n;
+      el.title = "Rank " + n + " of the open queue";
+    });
+  });
   document.body.addEventListener("htmx:oobBeforeSwap", (e) => {
     const target = e.detail.target;
     if (target?.id === "detail") {

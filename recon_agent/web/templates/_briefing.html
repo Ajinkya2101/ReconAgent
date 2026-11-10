@@ -2,6 +2,11 @@
 {% set first = n.shift_briefing.split(". ")[0] %}
 {% set briefing_id = store.res.kpis.sales_date ~ "-" ~ store.loaded_at.strftime('%H%M') %}
 {% set is_read = store.briefing_read.get(user.name) == briefing_id %}
+{% set origins = store.res.kpis.by_origin or {} %}
+{% set flag_total = origins.values()|sum(attribute="dollars") %}
+{% set exposure = store.res.kpis.dollar_exposure %}
+{% set since = store.since_line(user.name) %}
+{% set n_handed = store.counts(user.name).handed %}
 <section class="briefing{% if expanded %} is-expanded{% endif %}{% if is_read %} is-read{% endif %}" id="briefing" data-briefing-id="{{ briefing_id }}" aria-labelledby="briefing-h"{% if briefing_oob %} hx-swap-oob="outerHTML"{% endif %}>
   <div class="briefing-line">
     <h2 id="briefing-h">Shift briefing</h2>
@@ -13,10 +18,20 @@
     <button type="button" class="btn btn--quiet btn--sm" data-briefing-reopen>Read again</button>
     {% endif %}
   </div>
+  {% if since %}
+  {#- What changed while this person was away. Shift boundaries are not confirmed yet, so "away" is
+      measured from their sign-in before this one. -#}
+  <p class="since">Since your last sign-in at {{ since.at|hm }}: {% if since.parts %}{{ since.parts|join(" · ") }}{% else %}nothing new from the feed or other people{% endif %}.
+    {%- if n_handed %} <a href="/?view=handed">Handed over {{ n_handed }}</a>{% endif %}</p>
+  {% endif %}
   {% if not expanded %}<p class="briefing-lede">{{ first }}.</p>{% endif %}
+  {#- Said beside the lede, where the total is quoted: flags overlap on a SKU, so per-flag $ outrun it. -#}
+  {% set gap_note %}{% if flag_total > exposure + 0.5 %}<p class="briefing-gap">{{ exposure|money }} counts each SKU's largest flag once. Added flag by flag, the same flags come to {{ flag_total|money }}, because flags on one SKU often describe the same units.</p>{% endif %}{% endset %}
+  {% if not expanded %}{{ gap_note }}{% endif %}
   {% if expanded %}
   <div class="briefing-body">
     <p>{{ n.shift_briefing }}</p>
+    {{ gap_note }}
     {% if store.narration_is_ai %}
     {% set bc = n.briefing_check or {} %}
     <p class="audit-line">
@@ -27,16 +42,14 @@
     {% endif %}
     <h3>Top actions</h3>
     <ol class="actions">
-      {% for a in n.top_actions %}
-      {% set head, _, rest = a.partition(": ") %}
-      {% set key = head.lstrip("0") %}
+      {#- One line per SKU: a SKU with several flags is one place to go, not several actions. -#}
+      {% for a in n.top_actions|group_actions %}
       <li>
-        {% if key in store.rows %}<a class="code" href="/row/{{ key }}" hx-get="/row/{{ key }}" hx-target="#detail" hx-push-url="true" data-open-row="{{ key }}">{{ head }}</a>{% else %}<span class="code">{{ head }}</span>{% endif %}
-        <span>{{ rest or a }}</span>
+        {% if a.head %}{% if a.key in store.rows %}<a class="code" href="/row/{{ a.key }}" hx-get="/row/{{ a.key }}" hx-target="#detail" hx-push-url="true" data-open-row="{{ a.key }}">{{ a.head }}</a>{% else %}<span class="code">{{ a.head }}</span>{% endif %}{% endif %}
+        <span>{{ a.text }}{% if a.more %} <span class="more">And {{ a.more }} more {{ "action" if a.more == 1 else "actions" }} on this {{ "SKU" if a.key in store.rows and store.rows[a.key].sku else "row" }}.</span>{% endif %}</span>
       </li>
       {% endfor %}
     </ol>
-    {% set origins = store.res.kpis.by_origin or {} %}
     {% if origins %}
     <h3>Where today's flags started</h3>
     <table class="records origin-table">
@@ -48,11 +61,6 @@
         {% endfor %}
       </tbody>
     </table>
-    {# Said once, where the two numbers meet: flags overlap on a SKU, so per-flag dollars outrun the total. #}
-    {% set flag_total = origins.values()|sum(attribute="dollars") %}
-    {% if flag_total > store.res.kpis.dollar_exposure %}
-    <p class="table-note">Flag $ adds up each flag's own retail value across every rule, so a SKU with several flags counts more than once. That is why the column totals {{ flag_total|money }}, more than the {{ store.res.kpis.dollar_exposure|money }} retail $ at risk.</p>
-    {% endif %}
     {% endif %}
   </div>
   {% endif %}

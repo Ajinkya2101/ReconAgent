@@ -31,7 +31,10 @@ from .store import ACCEPTED, AI_READY, REJECTED, Row, Store, day_tag, ledger, ne
 HERE = Path(__file__).parent
 SESSION_COOKIE = "recon_session"
 APPROVERS = ("planner", "manager")   # who may approve write-back to a source system
-VIEWS = {"all": "Open", "ack": "Needs acknowledgment", "mine": "Claimed by me", "decided": "Decided"}
+VIEWS = {"all": "Open", "ack": "Needs acknowledgment", "mine": "Claimed by me", "handed": "Handed over",
+         "decided": "Decided"}
+# Phone labels: each is the start of its full name, so the visible text stays part of the accessible name.
+VIEW_SHORT = {"ack": "Needs ack", "mine": "Claimed", "handed": "Handed"}
 
 
 # --- formatting ----------------------------------------------------------------
@@ -46,6 +49,12 @@ def money(x) -> str:
 
 def hm(t: dt.datetime | None) -> str:
     return t.strftime("%H:%M") if t else ""
+
+
+def units(x, noun: str = "unit") -> str:
+    """'1 unit', '2,400 units'."""
+    n = abs(x) if isinstance(x, (int, float)) else x
+    return f"{num(n)} {noun}" + ("" if isinstance(n, (int, float)) and round(n) == 1 else "s")
 
 
 def initials(name: str) -> str:
@@ -71,6 +80,19 @@ def evidence_value(v):
     text = str(v)
     m = re.fullmatch(r"\d{4}-(\d{2})-(\d{2})[ T](\d{2}:\d{2})(:\d{2}(\.\d+)?)?", text)
     return f"{m[1]}/{m[2]} {m[3]}" if m else text
+
+
+def group_actions(actions: list[str]) -> list[dict]:
+    """Top actions, one line per SKU: the first action for each, and how many more it has."""
+    out: dict[str, dict] = {}
+    for a in actions:
+        head, _, rest = a.partition(": ")
+        key = head.lstrip("0") if rest else a
+        if key in out:
+            out[key]["more"] += 1
+        else:
+            out[key] = {"head": head if rest else "", "key": key, "text": rest or a, "more": 0}
+    return list(out.values())
 
 
 def evidence_lines(v) -> list[str]:
@@ -109,9 +131,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     env = templates.env
-    env.filters.update(num=num, money=money, hm=hm, initials=initials, humanize=humanize,
+    env.filters.update(num=num, money=money, hm=hm, units=units, initials=initials, humanize=humanize, group_actions=group_actions,
                        evidence_lines=evidence_lines)
-    env.globals.update(APPROVERS=APPROVERS, day_tag=day_tag, ledger=ledger, next_sales_day=next_sales_day, VIEWS=VIEWS, ACCEPTED=ACCEPTED, REJECTED=REJECTED,
+    env.globals.update(APPROVERS=APPROVERS, day_tag=day_tag, ledger=ledger, next_sales_day=next_sales_day, VIEWS=VIEWS, VIEW_SHORT=VIEW_SHORT, ACCEPTED=ACCEPTED, REJECTED=REJECTED,
                        config=config, store=store, ai_available=ai.credentials_available())
 
     def user_of(request: Request) -> dict | None:
@@ -147,11 +169,11 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 "counts": store.counts(user["name"]), "version": store.version}
 
     def detail_response(request: Request, row: Row, user: dict, oob_row: bool = True,
-                        retag_now: bool = False, announce: str = "") -> HTMLResponse:
-        """The SKU detail, plus (after an action) its queue row and counts out of band, and one
-        line for screen readers saying what just happened."""
+                        retag_now: bool = False, announce: str = "", moved: dict | None = None) -> HTMLResponse:
+        """The SKU detail, plus (after an action) its queue row, counts and day totals out of band,
+        and one line for screen readers saying what just happened."""
         return render(request, "_detail_response.html", user=user, selected=row, oob_row=oob_row,
-                      version=store.version, retag_now=retag_now, announce=announce)
+                      version=store.version, retag_now=retag_now, announce=announce, moved=moved)
 
     def label(row: Row) -> str:
         return row.sku or "the plant-wide row"
@@ -173,6 +195,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             failed_by_address.hit(address)
             return render_signin(request, target, username, "That username and password do not match.", 401)
         failed_by_user.reset(username)
+        store.signed_in(account["name"])
         resp = RedirectResponse(target, status_code=303)
         resp.set_cookie(SESSION_COOKIE, security.sign({"u": account["username"], "s": account["session"]}, "worklist"),
                         max_age=int(config.SESSION_HOURS * 3600), httponly=True, samesite="lax",
@@ -315,15 +338,40 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         if decision not in ("accept", "reject"):
             raise HTTPException(400, "decision must be accept or reject")
         try:
-            row = store.decide(flag_id, decision, user["name"], note)
+            row, _ = store.find(flag_id)
         except KeyError:
             raise HTTPException(404, f"No flag {flag_id}")
+        before, was = store.ranks().get(row.key), store.find(flag_id)[1].confidence
+        row = store.decide(flag_id, decision, user["name"], note)
         if not is_htmx(request):
             return RedirectResponse(f"/row/{row.key}", status_code=303)
         rule = flag_id.split("-", 1)[0]
         retag = decision == "accept" and rule in config.CARRY_FORWARD_RULES
-        said = f"{'Accepted' if decision == 'accept' else 'Rejected'} {rule} on {label(row)}."
-        return detail_response(request, row, user, retag_now=retag, announce=said)
+        moved = rank_move(row, flag_id, before, was)
+        said = f"{'Accepted' if decision == 'accept' else 'Rejected'} {rule} on {label(row)}. {moved['said']}"
+        return detail_response(request, row, user, retag_now=retag, announce=said, moved=moved)
+
+    def rank_move(row: Row, flag_id: str, before: int | None, was: float) -> dict:
+        """Why the row moved in the queue after a decision, so a jump in rank is never silent: the
+        row now ranks on its next open flag, and the rule's new confidence re-ranks its other flags."""
+        after = store.ranks().get(row.key)
+        _, f = store.find(flag_id)
+        others = {r.key for r in store.rows.values() if r.key != row.key
+                  for g in r.open_flags if g.rule == f.rule}
+        if not row.is_open:
+            said = f"{label(row)} leaves the open queue: every flag on it is decided."
+        elif before == after:
+            said = f"{label(row)} stays at rank {after}."
+        else:
+            top = row.top
+            said = (f"{label(row)} moves from rank {before} to rank {after}: it now ranks on {top.rule}, "
+                    f"{money(top.dollars) if top.dollars >= 0.5 else 'no retail value'}.")
+        if others and abs(f.confidence - was) > 1e-9:
+            n = f"{len(others)} other {'row' if len(others) == 1 else 'rows'}"
+            said += (f" Planners now accept {f.rule} more often, so its flags on {n} rank higher."
+                     if f.confidence > was else
+                     f" Planners now reject {f.rule} more often, so its flags on {n} rank lower.")
+        return {"flag": flag_id, "key": row.key, "before": before, "after": after, "said": said}
 
     def require_approver(request: Request) -> dict:
         user = require_user(request)

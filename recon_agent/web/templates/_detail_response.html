@@ -1,3 +1,4 @@
+{% from "_macros.html" import day_stats %}
 {% set row = selected %}
 {% include "_detail.html" %}
 {% if announce %}<div id="announce" hx-swap-oob="innerHTML">{{ announce }}</div>{% endif %}
@@ -8,4 +9,8 @@
 {% for v in VIEWS %}<b class="view-count" id="count-{{ v }}" hx-swap-oob="outerHTML">{{ counts[v] }}</b>{% endfor %}
 {% include "_strip_claims.html" %}
 <div id="carried-in" hx-swap-oob="outerHTML">{% include "_carried_in.html" %}</div>
+{# The decision moves the shelf: what is still at risk drops and what was accepted grows. #}
+{{ day_stats(store.day_summary(row.sales_date), true) }}
+{# A decision re-ranks other rows too (rule confidence); app.js renumbers the rows on screen. #}
+<span id="rank-map" hidden data-ranks='{{ store.ranks()|tojson }}' hx-swap-oob="outerHTML"></span>
 {% endif %}

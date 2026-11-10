@@ -21,7 +21,7 @@
     <div class="wb-actions"><button class="btn btn--sm btn--primary" hx-post="/corrections/{{ c.id }}/retry" hx-target="#detail" hx-disabled-elt="this">Retry</button>
       <span class="decide-hint">Recomputed from what the worklist shows now</span></div>
     {% elif shown is sameas p %}
-    <div class="wb-actions"><button class="btn btn--sm btn--primary" hx-post="/flags/{{ f.id|urlencode }}/correction" hx-target="#detail" hx-disabled-elt="this">Approve and send to {{ p.system }}</button>
+    <div class="wb-actions"><button class="btn btn--sm{% if not row_waiting %} btn--primary{% endif %}" hx-post="/flags/{{ f.id|urlencode }}/correction" hx-target="#detail" hx-disabled-elt="this">Approve and send to {{ p.system }}</button>
       <span class="decide-hint">{% if f.status == "Open" %}Accepts the flag and s{% else %}S{% endif %}ends this change through Oracle Integration; it is confirmed when the feed shows it</span></div>
     {% endif %}
   {% elif shown is sameas p %}
