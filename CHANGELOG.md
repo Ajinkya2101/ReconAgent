@@ -6,6 +6,30 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-10
+
+**Upgrading from 0.5.0:** nothing to migrate; the event contract (v4) and the seed are unchanged.
+
+### Changed: the SKU detail shows discrepancies, not one block per rule
+- **One row per discrepancy.** One source error raises a flag at every later step of the demand-to-work-order chain
+  (R01-R09), all for the same units: a BUSS order raised by 600 gives R02, R04 and R05. Those flags are now one
+  discrepancy, led by the step where the error entered. Every other flag stands alone. Rule codes are no longer shown;
+  the record each one is about (order line, work order, stock row) follows its title.
+- **Fix first, then the rest.** The most important open discrepancy opens in full: explanation, the fix as exact
+  record changes (every flag's correction in it, e.g. ODI-0018 2,400 -> 3,000 and the two MIPS changes that follow),
+  where it started, and Accept / Reject. The others are one line each and open in place; decided ones drop to a line.
+- **One decision, one approval.** Accept, Reject, Change decision and Approve-and-send act on every flag in the
+  discrepancy (`scope=discrepancy` on `POST /flags/{id}/decision` and `/correction`; the API and single-flag forms
+  still work). Money accepted counts each discrepancy once, so the header no longer says "not deduplicated".
+- A failed write-back now says so on the discrepancy, with the reason and Retry (it used to show a fresh proposal).
+- The queue row's "+N more" counts discrepancies.
+- **"Production requirement"** replaces "How the engine got here": sales orders + forecast = total demand, less
+  allocated and available stock = stock required; then MIPS planned manufactured qty - stock required = Surplus,
+  Shortfall or Balanced. The "Demand left" row, its check footnote and the per-system bar chart are gone.
+- **Source records** tables end in a totals row.
+- **Fixed:** after a decision, focus went to the SKU heading because out-of-band swaps re-ran the refocus; it now
+  moves to the next discrepancy to fix.
+
 ## [0.5.0] - 2026-11-10
 
 **Upgrading from 0.4.0:** publish the seed again (`python -m recon_agent events seed --reset`) to get the new starting day.
