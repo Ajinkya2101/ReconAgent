@@ -1,0 +1,71 @@
+{% from "_macros.html" import icon %}
+{#- The evidence behind a discrepancy's lead flag, closed by default: which system misfired and what
+    each one did, the AI's account when it wrote one, and the rule's own figures. Needs f, nar, by_ai, acc. -#}
+{% set chk = nar.check or {} %}
+{#- Warnings about the AI's text stay in sight; the audit trail sits with the evidence. -#}
+{% set off_origin = chk.chain_starts_at_origin == false and nar.cause_chain %}
+{% if chk.unverified_figures or off_origin %}
+  <p class="audit-line">
+    {% if chk.unverified_figures %}<span class="audit-warn">{{ chk.unverified_figures|length }} {{ "figure" if chk.unverified_figures|length == 1 else "figures" }} not in the engine's data: {{ chk.unverified_figures|join(", ") }}. Check before acting.</span>{% endif %}
+    {% if off_origin %}<span class="audit-warn">The AI's account starts in {{ nar.cause_chain[0].system }}; the rules attribute this to {{ acc.origin }}.</span>{% endif %}
+  </p>
+{% endif %}
+  {% set has_trail = by_ai and (nar.cause_chain or nar.impact or nar.verify) %}
+  <details class="flag-work">
+    <summary>{{ icon("down") }}Evidence{% if acc %} and what each system did{% endif %}{% if has_trail %} <span class="src">with AI analysis</span>{% endif %}</summary>
+    {% if nar.owner %}
+    <p class="flag-owner"><span>Owner <b>{{ nar.owner }}</b></span><span>{{ "Root cause" if by_ai else "Scenario" }} <b>{{ nar.root_cause }}</b></span></p>
+    {% endif %}
+
+    {% if acc %}
+    <section class="acct" aria-label="System accountability">
+      <dl class="acct-head">
+        <div><dt>Impact</dt><dd>{{ acc.impact }}{% if acc.impact_units %} · {{ acc.impact_units|units }}{% endif %}</dd></div>
+        <div><dt>Started in</dt><dd>{% if acc.origin == "Undetermined" %}Undetermined{% else %}<span class="code">{{ acc.origin }}</span>{% endif %}{% if acc.handoff %} <small>{{ acc.handoff }}</small>{% endif %}</dd></div>
+        <div><dt>Failure</dt><dd>{{ acc.failure_type }}</dd></div>
+        <div><dt>Attribution</dt><dd>{{ acc.basis|capitalize }}</dd></div>
+      </dl>
+      <p class="acct-point">{{ acc.failure_point }}</p>
+      <table class="acct-systems">
+        <caption class="sr">What each system did</caption>
+        <tbody>
+          {% for s in acc.systems %}
+          <tr class="acct-row role--{{ s.role|lower|replace(' ', '-') }}">
+            <th scope="row"><span class="code">{{ s.system }}</span></th>
+            <td><span class="role">{{ s.role }}</span></td>
+            <td>{{ s.detail or "—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+    {% endif %}
+
+    {% if has_trail %}
+    <section class="ai-trail" aria-label="AI analysis">
+      <p class="src">AI analysis · {{ config.OCI_MODEL_ID }}</p>
+      {% if nar.cause_chain %}
+      <h5>How it happened</h5>
+      <ol class="chain">
+        {% for s in nar.cause_chain %}<li><span class="code">{{ s.system }}</span> {{ s.step }}</li>{% endfor %}
+      </ol>
+      {% endif %}
+      {% if nar.impact %}<p><b>Impact</b> {{ nar.impact }}</p>{% endif %}
+      {% if nar.verify %}<p><b>Confirm with</b> {{ nar.verify }}</p>{% endif %}
+      {% if nar.linked_findings %}<p><b>Linked flags</b> {% for x in nar.linked_findings %}<span class="code">{{ x }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if chk.figures_checked or nar.evidence_used or nar.audit_id %}
+    <p class="audit-line">
+      {% if chk.figures_checked and not chk.unverified_figures %}<span>{{ "The 1 figure matches" if chk.figures_checked == 1 else "All " ~ chk.figures_checked ~ " figures match" }} the engine's data.</span>{% endif %}
+      {% if nar.evidence_used %}<span>Evidence used: {{ nar.evidence_used|map("humanize")|join(", ") }}</span>{% endif %}
+      {% if nar.audit_id %}<span>Audit <span class="code">{{ nar.audit_id }}</span>{% if nar.generated_at %} · {{ nar.generated_at[:16]|replace("T", " ") }} UTC{% endif %}</span>{% endif %}
+    </p>
+    {% endif %}
+    <dl class="evidence">
+      {% for k, v in f.evidence.items() %}
+      <div><dt>{{ k|humanize }}</dt><dd>{% for line in v|evidence_lines %}<span>{{ line }}</span>{% endfor %}</dd></div>
+      {% endfor %}
+    </dl>
+  </details>

@@ -303,7 +303,9 @@ class CardTest(unittest.TestCase):
         self.assertIn("Over-production", card)
         self.assertIn('role--misfired', card)
         self.assertIn("Plans 4,840 on work order WO-UBD-20260912-002", card)
-        self.assertIn("Shortfall: the work order", card)   # the equation, step by step
+        self.assertIn("Production requirement", card)   # the equation, step by step
+        self.assertIn("Stock required", card)
+        self.assertIn("Surplus <small>MIPS plans 1,140 more than is needed</small>", card)
 
         end = time.monotonic() + 5
         while time.monotonic() < end and client.get("/api/status").json().get("narration") != "ai":

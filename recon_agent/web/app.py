@@ -333,21 +333,27 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         return detail_response(request, row, user, announce=f"Note added to {label(row)} for the next shift.")
 
     @app.post("/flags/{flag_id}/decision", response_class=HTMLResponse)
-    def decide(request: Request, flag_id: str, decision: str = Form(...), note: str = Form("")):
+    def decide(request: Request, flag_id: str, decision: str = Form(...), note: str = Form(""),
+               scope: str = Form("")):
+        """Decide one flag, or (scope=discrepancy, as the detail panel sends) every flag in its discrepancy."""
         user = require_user(request)
         if decision not in ("accept", "reject"):
             raise HTTPException(400, "decision must be accept or reject")
         try:
-            row, _ = store.find(flag_id)
+            row, f = store.find(flag_id)
         except KeyError:
             raise HTTPException(404, f"No flag {flag_id}")
-        before, was = store.ranks().get(row.key), store.find(flag_id)[1].confidence
-        row = store.decide(flag_id, decision, user["name"], note)
+        before, was = store.ranks().get(row.key), f.confidence
+        if scope == "discrepancy":
+            row, d = store.decide_discrepancy(flag_id, decision, user["name"], note)
+            what = d.lead.title[0].lower() + d.lead.title[1:]
+        else:
+            row = store.decide(flag_id, decision, user["name"], note)
+            what = flag_id.split("-", 1)[0]
         if not is_htmx(request):
             return RedirectResponse(f"/row/{row.key}", status_code=303)
-        rule = flag_id.split("-", 1)[0]
         moved = rank_move(row, flag_id, before, was)
-        said = f"{'Accepted' if decision == 'accept' else 'Rejected'} {rule} on {label(row)}. {moved['said']}"
+        said = f"{'Accepted' if decision == 'accept' else 'Rejected'} {what} on {label(row)}. {moved['said']}"
         return detail_response(request, row, user, announce=said, moved=moved)
 
     def rank_move(row: Row, flag_id: str, before: int | None, was: float) -> dict:
@@ -379,10 +385,14 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         return user
 
     @app.post("/flags/{flag_id}/correction", response_class=HTMLResponse)
-    def approve_correction(request: Request, flag_id: str):
+    def approve_correction(request: Request, flag_id: str, scope: str = Form("")):
+        """Approve and send one flag's correction, or (scope=discrepancy) every correction in its discrepancy."""
         user = require_approver(request)
         try:
-            row, _ = store.approve(flag_id, user["name"])
+            if scope == "discrepancy":
+                row, _ = store.approve_discrepancy(flag_id, user["name"])
+            else:
+                row, _ = store.approve(flag_id, user["name"])
         except KeyError:
             raise HTTPException(404, f"No flag {flag_id}")
         return detail_response(request, store.rows.get(row.key, row), user)

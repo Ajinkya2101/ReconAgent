@@ -42,6 +42,77 @@ def fingerprint(row: "Row") -> str:
               f.accountability) for f in row.flags]
     return json.dumps([flags, repr(row.position)], sort_keys=True, default=str)
 
+# The demand-to-work-order chain, in the order an error enters it: demand capture (BUSS/Oracle to ODI),
+# allocation, MIPS demand, then the work order and its ODI copy. One source error shows up as a flag at
+# every later step, all for the same units, so those flags are one discrepancy, led by the first step.
+CHAIN = ("R01", "R02", "R03", "R09", "R08", "R04", "R06", "R05", "R07")
+
+
+@dataclass
+class Discrepancy:
+    """One thing wrong on a row: a single flag, or the chain flags one source error raised.
+    The lead flag carries the explanation; every flag's correction is part of the fix."""
+    flags: list[Finding]
+
+    @property
+    def lead(self) -> Finding:
+        return self.flags[0]
+
+    @property
+    def id(self) -> str:
+        return self.lead.id
+
+    @property
+    def open_flags(self) -> list[Finding]:
+        return [f for f in self.flags if f.status == "Open"]
+
+    @property
+    def is_open(self) -> bool:
+        return bool(self.open_flags)
+
+    @property
+    def status(self) -> str:
+        """Open while any flag is; otherwise the decision, the lead's when the flags were decided apart."""
+        return "Open" if self.is_open else self.lead.status
+
+    @property
+    def severity(self) -> str:
+        pool = self.open_flags or self.flags
+        return max(pool, key=lambda f: SEVERITY_RANK[f.severity]).severity
+
+    @property
+    def dollars(self) -> float:
+        """The largest flag's retail $: the flags describe the same units, so they are not added up."""
+        return max(f.dollars for f in (self.open_flags or self.flags))
+
+    @property
+    def units(self) -> float:
+        return max(abs(f.units) for f in (self.open_flags or self.flags))
+
+    @property
+    def priority(self) -> float:
+        return max(f.priority for f in (self.open_flags or self.flags))
+
+
+def discrepancies(flags: list[Finding]) -> list[Discrepancy]:
+    """Group a row's flags into discrepancies: chain flags with the same units form one (at most one
+    flag per rule, so two separate orders off by the same amount stay apart); every other flag stands
+    alone. Open discrepancies first, most important first; decided ones after."""
+    chain = sorted((f for f in flags if f.rule in CHAIN and abs(f.units) >= 0.5),
+                   key=lambda f: (CHAIN.index(f.rule), -abs(f.units), f.id))
+    groups: list[list[Finding]] = []
+    for f in chain:
+        home = next((g for g in groups if abs(abs(g[0].units) - abs(f.units)) < 0.5
+                     and f.rule not in {x.rule for x in g}), None)
+        if home is None:
+            groups.append([f])
+        else:
+            home.append(f)
+    grouped = {f.id for g in groups for f in g}
+    groups += [[f] for f in flags if f.id not in grouped]
+    out = [Discrepancy(g) for g in groups]
+    return sorted(out, key=lambda d: (not d.is_open, -d.priority, d.id))
+
 
 @dataclass
 class Row:
@@ -84,10 +155,20 @@ class Row:
         return [f for f in self.flags if f.status != "Open"]
 
     @property
+    def discrepancies(self) -> list[Discrepancy]:
+        return discrepancies(self.flags)
+
+    @property
+    def open_discrepancies(self) -> list[Discrepancy]:
+        return [d for d in self.discrepancies if d.is_open]
+
+    @property
     def accepted_dollars(self) -> float:
-        """Each accepted flag's own retail $, added up. Flags on one SKU can describe the same units,
-        so this is not deduplicated, and the screen says so wherever it shows it."""
-        return sum(f.dollars for f in self.flags if f.status == ACCEPTED)
+        """Retail $ accepted: each discrepancy's largest accepted flag, added up across discrepancies.
+        Separate discrepancies on one SKU can still describe overlapping units, so the screen says
+        the figure is added up wherever it shows it."""
+        return sum(max((f.dollars for f in d.flags if f.status == ACCEPTED), default=0.0)
+                   for d in self.discrepancies)
 
     @property
     def lead_units(self) -> float:
@@ -565,6 +646,40 @@ class Store:
             self._bump(key, user)
             return row
 
+    def discrepancy_of(self, flag_id: str) -> tuple[Row, Discrepancy]:
+        row, _ = self.find(flag_id)
+        return row, next(d for d in row.discrepancies if any(f.id == flag_id for f in d.flags))
+
+    def decide_discrepancy(self, flag_id: str, decision: str, user: str, note: str = "") -> tuple[Row, Discrepancy]:
+        """One decision for every flag in the discrepancy whose status it changes."""
+        target = ACCEPTED if decision == "accept" else REJECTED
+        with self.lock:
+            row, d = self.discrepancy_of(flag_id)
+            for f in d.flags:
+                if f.status != target:
+                    self.decide(f.id, decision, user, note)
+            return row, d
+
+    def approve_discrepancy(self, flag_id: str, user: str) -> tuple[Row, list[str]]:
+        """Approve and send every proposed correction in the discrepancy, lead first. A flag the
+        feed has already cleared (an earlier change in the same send fixed it) is skipped."""
+        row, d = self.discrepancy_of(flag_id)
+        said = []
+        for f in d.flags:
+            try:
+                current = self.correction(f)
+                if current and current["status"] in corrections.ACTIVE:
+                    continue
+                if self.proposal(f) is None:
+                    continue
+                row, message = self.approve(f.id, user)
+                said.append(message)
+            except KeyError:
+                continue
+        if not said:
+            said.append("Nothing in this discrepancy has an automatic correction; correct it in the source system.")
+        return self.rows.get(row.key, row), said
+
     def decide(self, flag_id: str, decision: str, user: str, note: str = "") -> Row:
         with self.lock:
             row, f = self.find(flag_id)
@@ -615,6 +730,7 @@ def ledger(row: Row) -> dict | None:
     return {
         "so": p.so_qty, "forecast": p.forecast_qty, "demand": demand, "allocated": p.allocated,
         "demand_left": p.demand_left, "available": p.available, "shortfall": p.shortfall,
+        "required": p.shortfall, "plan_gap": p.wo_qty - p.shortfall,
         "surplus_stock": p.stock_surplus, "mips_demand": p.mips_demand, "wo": p.wo_qty,
         "work_orders": p.wo_numbers, "odi_wo": p.odi_wo_qty, "odi_demand": p.odi_demand,
         "odi_allocated": p.odi_allocated, "balance": p.balance, "over": over, "short": short,

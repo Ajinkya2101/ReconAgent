@@ -1,0 +1,145 @@
+{% from "_macros.html" import icon, severity, money_or_dash %}
+{#- One discrepancy: a single flag, or the chain flags one source error raised. Three forms:
+    "lead" (the one to fix first, open in full), "next" (one line that opens in place) and "done"
+    (decided, one line). The lead flag explains it; every flag's correction is part of the fix. -#}
+{% set f = d.lead %}
+{% set nar = store.res.narration.by_id.get(f.id, {}) %}
+{% set by_ai = f.id in store.ai_ids %}
+{% set acc = f.accountability %}
+{% set fid = f.id|urlencode %}
+{% set hid = "flag-" ~ f.id|replace(" ", "-") ~ "-h" %}
+{% set row_waiting = store.pending_acks(row)|length > 0 %}
+{% set acked = d.flags|map(attribute="id")|select("in", store.acks)|list %}
+{% set units = d.units %}
+{#- The record it is about (order line, work order, stock row), so two flags of one rule read apart. -#}
+{% set subject = f.key if f.key not in (row.sku, row.key) else "" %}
+
+{#- The fix: every proposed or sent source-row change in the discrepancy, one line per changed field. -#}
+{% macro fix(d) -%}
+{%- set ns = namespace(lines=[], proposed=0, failed=[]) -%}
+{%- for g in d.flags -%}
+  {%- set c = store.correction(g) -%}
+  {%- set p = store.proposal(g) if not c or c.status in ("Failed", "Cancelled", "Confirmed") else none -%}
+  {%- if c and c.status in ("Approved", "Sent") -%}{%- set ns.lines = ns.lines + [(c, c.status)] -%}
+  {%- elif c and c.status == "Confirmed" and not p -%}{%- set ns.lines = ns.lines + [(c, "Confirmed")] -%}
+  {%- elif p -%}
+    {%- set ns.lines = ns.lines + [(p, "Failed" if c and c.status == "Failed" else "")] -%}
+    {%- if c and c.status == "Failed" -%}{%- set ns.failed = ns.failed + [c] -%}{%- else -%}{%- set ns.proposed = ns.proposed + 1 -%}{%- endif -%}
+  {%- endif -%}
+{%- endfor -%}
+{%- if ns.lines %}
+{% set states = {"Approved": "sending", "Sent": "sent, waiting for the feed", "Confirmed": "confirmed in the feed", "Failed": "failed"} %}
+<div class="dx-fix">
+  <span class="dx-k">Fix</span>
+  <div class="fx-grid">
+    {%- for x, state in ns.lines %}
+    {%- if x.op in ("I", "D") or not x.changes %}
+    <span class="code fx-sys">{{ x.system }}</span><span class="fx-rec">{{ x.summary }}</span><span class="fx-val">{{ "new row" if x.op == "I" else ("remove row" if x.op == "D" else "") }}{% if state %} <i class="fx-state">· {{ states[state] }}</i>{% endif %}</span>
+    {%- else %}{% for col, new in x.changes.items() %}
+    <span class="code fx-sys">{{ x.system }}</span><span class="fx-rec"><span class="code">{{ x.key }}</span> {{ col }}</span><span class="fx-val">{{ x.expected.get(col)|num if x.expected.get(col) is not none else "empty" }} {{ icon("arrow") }} <b>{{ new|num if new is not none else "empty" }}</b>{% if state %} <i class="fx-state">· {{ states[state] }}</i>{% endif %}</span>
+    {%- endfor %}{% endif %}
+    {%- endfor %}
+  </div>
+</div>
+{% for c in ns.failed %}
+<p class="fx-failed">{{ icon("x") }}<span><b>{{ c.id }} failed</b>{% if c.error %}: {{ c.error }}{% endif %}</span>
+  {% if user.role in APPROVERS %}<button class="btn btn--sm" hx-post="/corrections/{{ c.id }}/retry" hx-target="#detail" hx-disabled-elt="this">Retry</button>{% endif %}</p>
+{% endfor %}
+{% if ns.proposed %}
+  {% if user.role in APPROVERS %}
+<div class="wb-actions"><button class="btn btn--sm" hx-post="/flags/{{ d.lead.id|urlencode }}/correction" hx-vals='{"scope": "discrepancy"}' hx-target="#detail" hx-disabled-elt="this">Approve and send {{ "the change" if ns.proposed == 1 else "all " ~ ns.proposed ~ " changes" }}</button>
+  <span class="decide-hint">{% if d.is_open %}Accepts it and s{% else %}S{% endif %}ends {{ "it" if ns.proposed == 1 else "them" }} through Oracle Integration; confirmed when the feed shows {{ "it" if ns.proposed == 1 else "them" }}</span></div>
+  {% else %}
+<p class="decide-hint">A planner or manager approves write-back.</p>
+  {% endif %}
+{% endif %}
+{%- endif %}
+{%- endmacro %}
+
+{%- macro meta() -%}
+{% if acc or nar.owner or acked %}
+<p class="dx-meta">
+  {%- if acc %}<span>Started {% if acc.origin == "Undetermined" %}in <b>an undetermined system</b>{% elif acc.origin == "Integration" and acc.handoff %}at the <b class="code">{{ acc.handoff }}</b> hand-off{% else %}in <b class="code">{{ acc.origin }}</b>{% endif %} · {{ acc.failure_type|lower }}</span>{% endif %}
+  {%- if nar.owner %}<span>Owner <b>{{ nar.owner }}</b></span>{% endif %}
+  {%- if acked %}{% set a = store.ack_state(store.find(acked[0])[1]) %}{% if a.state == "acked" %}<span>{{ icon("check") }}Acknowledged by {{ a.user }} at {{ a.at|hm }}</span>{% endif %}{% endif %}
+</p>
+{% endif %}
+{%- endmacro %}
+
+{%- macro decide(size) -%}
+<form class="decide" method="post" action="/flags/{{ fid }}/decision" hx-post="/flags/{{ fid }}/decision" hx-target="#detail" hx-disabled-elt="find button">
+  <input type="hidden" name="scope" value="discrepancy">
+  {% if row.claim and row.claim.user != user.name %}
+  <p class="decide-warn">{{ row.claim.user }} claimed this {{ "SKU" if row.sku else "row" }} at {{ row.claim.at|hm }}. Deciding here records your name, not theirs.</p>
+  {% endif %}
+  <div class="decide-actions">
+    {%- if size %}
+    <button class="btn {{ size }}" name="decision" value="accept" data-accept>{{ icon("check") }}Accept</button>
+    <span class="dx-units">{{ units|num }} {{ "unit" if units|round == 1 else "units" }}</span>
+    <button class="btn btn--reject {{ size }}" name="decision" value="reject" data-reject>{{ icon("x") }}Reject</button>
+    {%- else %}
+    <button class="btn{% if not row_waiting %} btn--primary{% endif %}" name="decision" value="accept" aria-describedby="{{ hid }}-hint" data-accept>{{ icon("check") }}Accept</button>
+    <button class="btn btn--reject" name="decision" value="reject" data-reject>{{ icon("x") }}Reject</button>
+    {%- endif %}
+  </div>
+  {% if not size %}<p class="decide-hint" id="{{ hid }}-hint">{% if row_waiting %}<b>Acknowledge the High {{ "flag" if store.pending_acks(row)|length == 1 else "flags" }} first.</b> {% endif %}Agree, and correct it at the source.</p>{% endif %}
+  <details class="decide-note">
+    <summary>{{ icon("note") }}Add a note to this decision</summary>
+    <label class="note"><span class="sr">Note for the next shift</span>
+      <textarea name="note" rows="2" maxlength="400" placeholder="What you checked or changed"></textarea></label>
+  </details>
+</form>
+{%- endmacro %}
+
+{%- macro explain() -%}
+<p class="flag-explain"><span class="src">{{ "AI explanation · " ~ config.OCI_MODEL_ID if by_ai else ("From the ML layer · robust z-score against this item's history" if f.area == "Anomaly Detection" else "From the rules") }}</span>{{ f.narrative or f.recommendation }}</p>
+{%- endmacro %}
+
+{% if mode == "lead" %}
+<article class="flag lead" aria-labelledby="{{ hid }}">
+  <p class="lead-sev">{{ severity(d.severity) }}<span class="lead-qty"><b>{{ money_or_dash(d.dollars) }}</b> · {{ units|num }} {{ "unit" if units|round == 1 else "units" }}</span></p>
+  <h4 id="{{ hid }}" tabindex="-1">{{ f.title }}{% if subject %} <span class="code dx-key">{{ subject }}</span>{% endif %}</h4>
+  {{ explain() }}
+  {{ fix(d) }}
+  {{ meta() }}
+  {{ decide("") }}
+  {% include "_evidence.html" %}
+</article>
+
+{% elif mode == "next" %}
+<details class="flag nx" aria-labelledby="{{ hid }}">
+  <summary>{{ severity(d.severity) }}<h4 id="{{ hid }}" tabindex="-1" class="nx-title">{{ f.title }}{% if subject %} <span class="code dx-key">{{ subject }}</span>{% endif %}</h4><span class="nx-qty">{{ money_or_dash(d.dollars) }}</span>{{ icon("down") }}</summary>
+  <div class="nx-body">
+    {{ explain() }}
+    {{ fix(d) }}
+    {{ meta() }}
+    {{ decide("btn--sm") }}
+    {% include "_evidence.html" %}
+  </div>
+</details>
+
+{% else %}
+{% set dd = store.decision(f) %}
+{% set d_at = store.decided_at.get(f.id) %}
+<div class="flag is-decided done" aria-labelledby="{{ hid }}">
+  <p class="done-line">{{ icon("check" if d.status == ACCEPTED else "x") }}<b>{{ "Accepted" if d.status == ACCEPTED else "Rejected" }}</b>
+    <h4 id="{{ hid }}" tabindex="-1">{{ f.title }}{% if subject %} <span class="code dx-key">{{ subject }}</span>{% endif %}</h4>
+    <span class="done-qty">{{ money_or_dash(d.dollars) }}</span></p>
+  <p class="done-by">{% if dd %}{{ dd.by or "someone" }}{% if d_at %} at {{ d_at.at|hm }}{% elif dd.at %} at {{ dd.at[11:16] }}{% endif %} · {% endif %}{{ "awaiting correction in the source system; closes when the feed shows it" if d.status == ACCEPTED else "rule confidence lowered; hidden next run while the quantity is unchanged" }}</p>
+  {% if moved and moved.flag in d.flags|map(attribute="id")|list %}<p class="rank-move">{{ moved.said }}</p>{% endif %}
+  {% if dd and dd.note %}<p class="decided-note">“{{ dd.note }}”</p>{% endif %}
+  {{ fix(d) }}
+  <details class="change">
+    <summary>{{ icon("down") }}Change decision</summary>
+    <form class="decide decide--inline" method="post" action="/flags/{{ fid }}/decision" hx-post="/flags/{{ fid }}/decision" hx-target="#detail" hx-disabled-elt="find button">
+      <input type="hidden" name="scope" value="discrepancy">
+      <input type="hidden" name="note" value="{{ dd.note if dd else '' }}">
+      {% if d.status == ACCEPTED %}
+      <button class="btn btn--reject btn--sm" name="decision" value="reject">{{ icon("x") }}Reject instead</button>
+      {% else %}
+      <button class="btn btn--primary btn--sm" name="decision" value="accept">{{ icon("check") }}Accept instead</button>
+      {% endif %}
+    </form>
+  </details>
+</div>
+{% endif %}

@@ -76,29 +76,32 @@
   }
 
   // After an action the button that was pressed is gone (the detail re-renders), so remember
-  // which flag it belonged to and put focus back on that flag's heading.
-  let refocus = null;
+  // which discrepancy it belonged to. A decision moves focus to the next one to fix (the new lead);
+  // anything else puts focus back on the same discrepancy's heading.
+  let refocus = null, decided = false;
   document.addEventListener("htmx:beforeRequest", (e) => {
     if (e.detail.target?.id !== "detail") return;   // the background poll must not clear it
     const flag = e.detail.elt.closest?.(".flag");
     refocus = flag ? flag.getAttribute("aria-labelledby") : null;
+    decided = !!e.detail.elt.closest?.("form.decide");
   });
 
   // New detail content: bring it to the top, and move focus into it at every width so the
   // keyboard and screen reader follow the supervisor from the queue to the decision.
   document.addEventListener("htmx:afterSwap", (e) => {
-    if (e.detail.target.id !== "detail") return;
+    // Out-of-band pieces of the same response (counts, day totals) fire this too: only the detail itself counts.
+    if (e.detail.target.id !== "detail" || e.detail.elt !== e.detail.target) return;
     const key = $(".detail", e.detail.target)?.dataset.key;
     if (e.detail.requestConfig?.verb === "get") {
       e.detail.target.scrollTop = 0;
       if (key) markOpen(key);
       $("#detail-h")?.focus({ preventScroll: true });
     } else {
-      const target = (refocus && document.getElementById(refocus)) || $("#detail-h");
+      const target = (decided && $("#detail .lead h4")) || (refocus && document.getElementById(refocus)) || $("#detail-h");
       target?.focus({ preventScroll: true });
       target?.scrollIntoView({ block: "nearest" });
     }
-    refocus = null;
+    refocus = null; decided = false;
   });
   // A question that was answered clears the box for the next one.
   document.addEventListener("htmx:afterRequest", (e) => {
@@ -117,6 +120,8 @@
   function press(el) { if (el && !el.disabled) el.click(); return !!el; }
   function goTo(el) {
     if (!el) return false;
+    const shut = el.closest("details:not([open])");   // a one-line discrepancy opens to show its buttons
+    if (shut) shut.open = true;
     el.scrollIntoView({ block: "center" });
     el.focus({ preventScroll: true });
     return true;

@@ -1,6 +1,6 @@
 {% from "_macros.html" import icon, tag, severity, money_or_dash, ack_chip, sku_label %}
 {% set top = row.top %}
-{% set n_open = row.open_flags|length %}
+{% set more = row.open_discrepancies[1:] %}
 {% set n_decided = row.decided_flags|length %}
 {% if ranks is not defined %}{% set ranks = store.ranks() %}{% endif %}
 {% if show_tags is not defined %}{% set show_tags = store.multi_day() %}{% endif %}
@@ -23,7 +23,7 @@
       {{ severity(row.severity) }}
       <span class="row-title">{{ top.title }}</span>
       <span class="row-units">{{ top.units|units }}</span>
-      {% if n_open > 1 %}<span class="row-more" title="{% for f in row.open_flags[1:] %}{{ f.rule }} {{ f.title }}{% if not loop.last %}; {% endif %}{% endfor %}">+{{ n_open - 1 }} more {{ "flag" if n_open == 2 else "flags" }}<span class="sr">: {% for f in row.open_flags[1:] %}{{ f.rule }} {{ f.title }}{% if not loop.last %}; {% endif %}{% endfor %}</span></span>{% endif %}
+      {% if more %}<span class="row-more" title="{% for d in more %}{{ d.lead.title }}{% if not loop.last %}; {% endif %}{% endfor %}">+{{ more|length }} more<span class="sr"> {{ "discrepancy" if more|length == 1 else "discrepancies" }}: {% for d in more %}{{ d.lead.title }}{% if not loop.last %}; {% endif %}{% endfor %}</span></span>{% endif %}
       {% if n_decided %}<span class="row-state">{% if row.is_open %}{{ n_decided }} decided{% else %}all {{ n_decided }} decided{% endif %}</span>{% endif %}
     </span>
     <span class="row-chips">

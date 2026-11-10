@@ -266,7 +266,7 @@ When only one sales day has open work, its tag appears once as the queue's shelf
 - **Panel Film** (#f6f7f9): The detail column and the assistant's question field; one step lighter than the ground to separate the reading pane.
 - **Raised White** (#ffffff): The current queue row, selected day face, inputs, inline notices, the assistant drawer, and text on ink fills.
 - **Hover Film** (#e5e8eb): Hover fill for rows, buttons, day faces and view tabs.
-- **Ink 2** (#3f454c): Secondary text, the shared-scale system bars, outlines of Medium severity.
+- **Ink 2** (#3f454c): Secondary text, outlines of Medium severity.
 - **Ink 3** (#5c636b): Tertiary text: captions, provenance, units, decided money, placeholders.
 - **Rule** (#d3d7db): Row hairlines, ledger dividers, evidence grid, the shortfall hatch.
 - **Rule 2** (#b3b9bf): Stronger hairlines: the detail column edge, unselected outlines, empty meter bars, scrollbar thumbs.
@@ -298,7 +298,7 @@ When only one sales day has open work, its tag appears once as the queue's shelf
 - **Body Small** (13px): Row second lines, toolbar tabs, the as-of line, tables.
 - **Label** (700, 12px, 0.05em, uppercase): Detail section heads ("Reconciled position", "Flags") and the severity label (650). Only real section headings and severity take uppercase.
 - **Caption** (400–600, 12px): Units, provenance ("Rule text · 15:57"), sub-lines, legends.
-- **Code** (mono, 700, 0.95em): SKU numbers, run IDs, rule codes, system names on the shared-scale bars.
+- **Code** (mono, 700, 0.95em): SKU numbers, run IDs, rule codes.
 - **Tag Face** (Doto 900 day / 700 date, 15px; 12px small, 19px large): Only inside a tag.
 
 ### Named Rules
@@ -316,7 +316,7 @@ Queue rows are a two-area grid: rank, SKU and item over the rule title and count
 
 The day strip wraps and never scrolls a sales day off-screen. With one open day it becomes a static shelf label (tag, dollars, rows and flags) instead of a filter with one choice. On phone every day face takes a full row.
 
-The SKU detail leads with the action. In order: the header (tag, SKU, money, claim); the acknowledge bar when High flags are waiting; shift notes; the demand track; each flag with its explanation, where it started, the proposed correction and the decision; then "How the engine got here" (the ledger equation and the shared-scale system table) and the source records. The ledger is the engine's working, not the first thing a supervisor must read past.
+The SKU detail leads with the action. In order: the header (tag, SKU, money, claim); the acknowledge bar when High flags are waiting; shift notes; the demand track; "Fix first": the most important open discrepancy in full (explanation, the fix as exact record changes, where it started, the decision), then the rest one line each until opened, then the decided ones as single lines; then "Production requirement" (the ledger equation, ending in the MIPS plan against the stock required) and the source records, each table closed by a totals row. The ledger is the engine's working, not the first thing a supervisor must read past.
 
 Between 720 and 1099px the layout collapses to one column and the detail becomes a slide-over sheet (up to 640px wide) with a Back button. The as-of line keeps its tag and time (the long wording drops) and the strip's actions go to icons with their names kept for screen readers. Under 720px the strip becomes two rows (88px): the title and account on top, the mode, tag and time beneath, so freshness is visible at every width and nothing scrolls sideways. The toolbar stacks, rows reflow to ID and money over the second line, and the detail header stacks money under the title. On phone the detail ends in a sticky dock at the thumb: Back to the queue and, while High flags wait, the acknowledge bar.
 
@@ -340,7 +340,7 @@ Corners are nearly square. Interactive controls and inputs take a 4px radius; th
 
 The tag's silhouette is the system's one distinctive shape: a flat rounded rectangle with a circular notch punched out of its left end (a radial-gradient mask; 3.5px radius at 24px tall, 2.5px small, 4.5px large), so the ground shows through as on a real bread-bag closure.
 
-Lines carry structure. Hairlines in Rule separate rows; Rule 2 marks stronger edges; full ink lines (1px, or 2px for the ledger total) close a band: the strip's bottom, the toolbar, the detail header, the first flag and the source records. A pending sales day with no work yet is drawn with a 1px dashed Ink 2 outline.
+Lines carry structure. Hairlines in Rule separate rows; Rule 2 marks stronger edges; full ink lines (1px, or 2px for the ledger total) close a band: the strip's bottom, the toolbar, the detail header, the list of further discrepancies and the source records. The lead discrepancy is the one boxed thing in the detail: white inside a 1px ink outline. A pending sales day with no work yet is drawn with a 1px dashed Ink 2 outline.
 
 ## Components
 
@@ -352,7 +352,7 @@ Outlined ink, deliberate, nearly square.
 - **Reject:** Control Edge border with Ink 2 text, hover returns to ink on white. It always sits apart from Accept (pushed to the far end of the action row).
 - **Accept before acknowledgment:** While a High flag waits for acknowledgment, Accept drops to the default outline and the acknowledge bar holds the only ink-filled button. Acknowledging is the primary act until it is done.
 - **Quiet:** No border; used in the top strip (Ask, sign out, my claims).
-- **Focus:** 2px ink outline, 2px offset, everywhere; white on ink fills (overdue notices and bars). Opening a SKU moves focus to its heading; after a decision, focus returns to that flag's heading.
+- **Focus:** 2px ink outline, 2px offset, everywhere; white on ink fills (overdue notices and bars). Opening a SKU moves focus to its heading; after a decision, focus moves to the next discrepancy to fix (the new lead).
 - **Busy / disabled:** 0.55 opacity with a progress cursor while htmx is in flight.
 
 ### Day-Code Tag (signature)
@@ -378,7 +378,7 @@ Hairline-separated, full-bleed hover in Hover Film, the current row raised to wh
 Under "Supply against demand", a 30px track on one shared scale: Inventory Grey, ink for wrapped production, a 2px ink demand marker extending past the bar, then either a flat surplus segment in the current day's colour or a hatched shortfall. On re-tag, the next day's flat fill wipes left-to-right over the surplus (clip-path, 220ms, ease `cubic-bezier(0.16, 1, 0.3, 1)`) and the carry line wipes in with it. Hovering or focusing an Accept that carries surplus previews the same wipe with a dashed ink edge; the hint beside that Accept names the move ("Carries 4,708 units SAT → MON, corrected in MIPS").
 
 ### Ledger Equation
-"How the engine got here", after the flags: a ruled equation with an operator column (−, +, =), a label with a caption source, right-aligned figures and a 2px ink rule above the total, then a shared-scale table of system bars (8px Ink 2 bars with a 1.5px ink demand mark).
+"Production requirement", after the flags: a ruled equation with an operator column (−, +, =), a label with a caption source and right-aligned figures. Sales orders + forecast = total demand; less allocated and available stock = stock required (1px ink rule above each subtotal). A second short block checks the plan: MIPS planned manufactured qty − stock required = Surplus, Shortfall or Balanced, the word in ink and the figure largest, under a 2px ink rule. No chart follows it.
 
 ### Inputs / Fields
 - **Style:** White, 1px Control Edge border, 4px radius; search 34px tall (44px on touch) with a leading search icon and a `/` key hint; sign-in fields 44px at 17px text.
@@ -394,8 +394,10 @@ Under "Supply against demand", a 30px track on one shared scale: Inventory Grey,
 ### Acknowledge Bar
 While any High flag on the SKU waits, a bar pinned to the top of the detail as it scrolls: clock icon, "2 High flags · acknowledge by 17:17, 14 min left", and one ink-filled "Acknowledge all 2". White with a 1px ink rule beneath while due; an ink fill with a white button once overdue. On phone it moves into the bottom dock.
 
-### Flags and Notices
-Each flag is a ruled block, action first: severity and rule code, a 17px title, quantities, the explanation with its provenance caption ("From the rules" or "AI explanation · model"), one caption line saying where it started, the proposed write-back, then the decision. Under the decision sit two disclosures: "Add a note to this decision" and "Evidence and what each system did" (accountability table, AI analysis and the bordered evidence grid). The AI figure check stays in view under the flag. Notices are inset-outlined boxes on white with 2px corners: due acknowledgment is outlined in ink, overdue is an ink fill with white controls.
+### Discrepancies and Notices
+The panel shows discrepancies, not rule flags. One source error raises a flag at every later step of the demand-to-work-order chain (R01-R09), all for the same units; those flags are one discrepancy, led by the step where the error entered, and decided, approved and counted once (its money is the largest flag's, never the sum). Every other flag is a discrepancy of its own. No rule codes are shown; the record a discrepancy is about (order line, work order, stock row) follows its title in muted mono so two of one kind read apart.
+
+The lead ("Fix first") is a white block in a 1px ink outline: severity and money (20px) with units, a 20px title, the explanation with its provenance caption ("From the rules" or "AI explanation · model"), the Fix box (one line per changed field: system, record and field, old → **new**, with its write-back state) and one Approve-and-send for all of them, one caption line (where it started, owner, acknowledged), then Accept and Reject. "Then N more" lists the rest as 48px one-line rows (severity, title, money, chevron) that open in place to the same content with small buttons. Decided discrepancies drop to a ticked or crossed line with who and when, and "Change decision". Under each decision sit "Add a note to this decision" and "Evidence and what each system did" (accountability table, AI analysis, audit trail and the evidence grid); an AI figure warning stays in view above it. Notices are inset-outlined boxes on white with 2px corners: due acknowledgment is outlined in ink, overdue is an ink fill with white controls.
 
 ### Shift Notes
 A hand-off note needs no decision: "Leave a note for the next shift, without deciding" sits under the flags. Notes list newest first above the demand track (name, time, text, hairline between), and the row carries a note chip.

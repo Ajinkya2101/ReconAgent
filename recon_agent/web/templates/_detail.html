@@ -1,9 +1,11 @@
 {% from "_macros.html" import icon, tag, severity, money_or_dash, sku_label %}
-{#- Action first: who owns it, the 15-minute acknowledgment, supply against demand, then each
-    flag's correction and decision. The ledger arithmetic follows as the engine's working. -#}
+{#- Action first: who owns it, the 15-minute acknowledgment, supply against demand, then the
+    discrepancy to fix first and the rest one line each. The ledger arithmetic follows as the engine's working. -#}
 {% set L = ledger(row) %}
 {% set today = day_tag(row.sales_date) %}
-{% set n_open = row.open_flags|length %}
+{% set D = row.discrepancies %}
+{% set open_d = D|selectattr("is_open")|list %}
+{% set n_open = open_d|length %}
 {% set mine = row.claim and row.claim.user == user.name %}
 {% set pending = store.pending_acks(row) %}
 {% set notes = store.notes.get(row.key, []) %}
@@ -16,17 +18,17 @@
     </div>
     {#- The large figure is what is still at risk, so a decision visibly moves it; what has been
         accepted sits under it. A row with no retail value leads with its units instead of a dash. -#}
-    {% set n_accepted = row.flags|selectattr("status", "eq", ACCEPTED)|list|length %}
+    {% set n_accepted = D|selectattr("status", "eq", ACCEPTED)|list|length %}
     <div class="detail-money">
       {% if n_open and row.at_risk < 0.5 %}
       <span class="detail-dollars detail-dollars--units">{{ row.lead_units|num }} <small>{{ "unit" if row.lead_units|round == 1 else "units" }}</small></span>
-      <span class="detail-cap">no retail value · {% if n_open > 1 %}top of {{ n_open }} open flags{% else %}1 open flag{% endif %}</span>
+      <span class="detail-cap">no retail value · {% if n_open > 1 %}top of {{ n_open }} open discrepancies{% else %}1 open discrepancy{% endif %}</span>
       {% else %}
       <span class="detail-dollars">{{ row.at_risk|money }}</span>
-      <span class="detail-cap">{% if n_open > 1 %}still at risk · largest of {{ n_open }} open flags{% elif n_open == 1 %}still at risk · 1 open flag{% else %}still at risk · all {{ row.flags|length }} flags decided{% endif %}</span>
+      <span class="detail-cap">{% if n_open > 1 %}still at risk · largest of {{ n_open }} open discrepancies{% elif n_open == 1 %}still at risk · 1 open discrepancy{% else %}still at risk · all {{ D|length }} {{ "discrepancy" if D|length == 1 else "discrepancies" }} decided{% endif %}</span>
       {% endif %}
       {% if n_accepted %}
-      <span class="detail-accepted"><b>{{ row.accepted_dollars|money }}</b> accepted <small>{{ n_accepted }} {{ "flag" if n_accepted == 1 else "flags" }} added up, not deduplicated</small></span>
+      <span class="detail-accepted"><b>{{ row.accepted_dollars|money }}</b> accepted <small>{{ n_accepted }} {{ "discrepancy" if n_accepted == 1 else "discrepancies" }}{% if n_accepted > 1 %}, added up{% endif %}</small></span>
       {% endif %}
     </div>
     <div class="claim" id="claim">
@@ -93,9 +95,23 @@
   {% endif %}
 
   <section class="flags" aria-labelledby="flags-h">
-    {% set n_decided = row.decided_flags|length %}
-    <h3 id="flags-h">{% if n_open %}Decide{% else %}Flags{% endif %} <span class="count">{% if n_decided and n_open %}{{ n_decided }} of {{ row.flags|length }} decided{% else %}{{ row.flags|length }}{% endif %}</span></h3>
-    {% for f in row.flags %}{% include "_flag.html" %}{% endfor %}
+    {% set done_d = D|rejectattr("is_open")|list %}
+    {% if open_d %}
+    <h3 id="flags-h">Fix first</h3>
+    {% with d = open_d[0], mode = "lead" %}{% include "_discrepancy.html" %}{% endwith %}
+    {% if open_d|length > 1 %}
+    <h3 class="flags-then">Then <span class="count">{{ open_d|length - 1 }} more</span></h3>
+    <div class="nx-list">
+      {% for d in open_d[1:] %}{% with mode = "next" %}{% include "_discrepancy.html" %}{% endwith %}{% endfor %}
+    </div>
+    {% endif %}
+    {% endif %}
+    {% if done_d %}
+    <h3 {% if not open_d %}id="flags-h"{% endif %} class="flags-done">Decided <span class="count">{{ done_d|length }}</span></h3>
+    <div class="done-list">
+      {% for d in done_d %}{% with mode = "done" %}{% include "_discrepancy.html" %}{% endwith %}{% endfor %}
+    </div>
+    {% endif %}
     {% if row.is_open %}
     <details class="note-add">
       <summary>{{ icon("note") }}Leave a note for the next shift <span>without deciding</span></summary>
@@ -110,7 +126,9 @@
 
   {% if L %}
   <section class="ledger" aria-labelledby="ledger-h">
-    <h3 id="ledger-h">How the engine got here</h3>
+    <h3 id="ledger-h">Production requirement</h3>
+    {#- Demand, less the stock WMS already holds, is what production must make; the MIPS plan is
+        then checked against it. The result names itself, in ink: surplus, shortfall or balanced. -#}
     <dl class="equation">
       <div class="eq-row">
         <dt><span class="eq-op" aria-hidden="true"></span>Sales orders <small>BUSS, {{ L.orders }} order {{ "line" if L.orders == 1 else "lines" }}</small></dt>
@@ -125,38 +143,34 @@
         <dd>{{ L.demand|num }}</dd>
       </div>
       <div class="eq-row">
-        <dt><span class="eq-op" aria-hidden="true">−</span>Allocated stock <small>WMS, already reserved for orders: needs no production</small></dt>
+        <dt><span class="eq-op" aria-hidden="true">−</span>Allocated stock <small>WMS, already reserved for orders</small></dt>
         <dd>{{ L.allocated|num }}</dd>
       </div>
-      <div class="eq-row eq-row--sub">
-        <dt><span class="eq-op" aria-hidden="true">=</span>Demand left
-          <small>MIPS Forecast / Order Quantity: <span class="eq-check{% if not L.mips_ok %} eq-check--off{% endif %}">{{ L.mips_demand|num }} {{ "matches" if L.mips_ok else "does not match" }}</span></small></dt>
-        <dd>{{ L.demand_left|num }}</dd>
-      </div>
       <div class="eq-row">
-        <dt><span class="eq-op" aria-hidden="true">−</span>Available stock <small>WMS, free to use{% if L.surplus_stock %}; {{ L.surplus_stock|num }} more than the demand left stays in WMS{% endif %}</small></dt>
+        <dt><span class="eq-op" aria-hidden="true">−</span>Available stock <small>WMS, free to use{% if L.surplus_stock %}; {{ L.surplus_stock|num }} more than the demand needs stays in WMS{% endif %}</small></dt>
         <dd>{{ L.available|num }}</dd>
       </div>
-      <div class="eq-row eq-row--total">
-        <dt><span class="eq-op" aria-hidden="true">=</span>Shortfall: the work order
-          <small>MIPS {% if L.work_orders %}work order {{ L.work_orders|join(", ") }}: <span class="eq-check{% if not L.wo_ok %} eq-check--off{% endif %}">{{ L.wo|num }} {{ "matches" if L.wo_ok else "does not match" }}</span>{% else %}<span class="eq-check eq-check--off">has no work order</span>{% endif %}</small></dt>
-        <dd>{{ L.shortfall|num }}</dd>
+      <div class="eq-row eq-row--sub">
+        <dt><span class="eq-op" aria-hidden="true">=</span>Stock required <small>what production must make</small></dt>
+        <dd>{{ L.required|num }}</dd>
       </div>
     </dl>
-    <p class="eq-foot">Check: work order {{ L.wo|num }} + available {{ L.available|num }} + allocated {{ L.allocated|num }} = {{ (L.wo + L.available + L.allocated)|num }} against {{ L.demand|num }} demand{% if L.balance > 0 %}: <b>{{ L.balance|num }} too many</b>{% elif L.balance < 0 %}: <b>{{ (-L.balance)|num }} short</b>{% else %}: balanced{% endif %}.</p>
-
-    <table class="systems">
-      <caption class="sr">Each system's quantity on the same scale as demand</caption>
-      <tbody>
-        {% for s in L.systems %}
-        <tr>
-          <th scope="row"><span class="code">{{ s.system }}</span> {{ s.label }}</th>
-          <td class="systems-bar" aria-hidden="true"><span class="bar" style="width:{{ s.pct }}%"></span><span class="bar-mark" style="left:{{ L.pct.demand }}%"></span></td>
-          <td class="num">{{ s.value|num }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    {% set gap = L.plan_gap %}
+    <dl class="equation equation--plan">
+      <div class="eq-row eq-row--plan">
+        <dt><span class="eq-op" aria-hidden="true"></span>MIPS planned manufactured qty
+          <small>{% if L.work_orders %}{{ "Work order" if L.work_orders|length == 1 else "Work orders" }} {{ L.work_orders|join(", ") }}{% else %}MIPS has no work order{% endif %}</small></dt>
+        <dd>{{ L.wo|num }}</dd>
+      </div>
+      <div class="eq-row">
+        <dt><span class="eq-op" aria-hidden="true">−</span>Stock required</dt>
+        <dd>{{ L.required|num }}</dd>
+      </div>
+      <div class="eq-row eq-row--total">
+        <dt><span class="eq-op" aria-hidden="true">=</span>{% if gap >= 0.5 %}Surplus <small>MIPS plans {{ gap|num }} more than is needed</small>{% elif gap <= -0.5 %}Shortfall <small>MIPS plans {{ (-gap)|num }} less than is needed</small>{% else %}Balanced <small>MIPS plans exactly what is needed</small>{% endif %}</dt>
+        <dd>{{ gap|abs|num }}</dd>
+      </div>
+    </dl>
   </section>
   {% endif %}
 
@@ -173,6 +187,7 @@
         <tr><td class="code">{{ o.order_nbr }}{% if o.line != 1 %}/{{ o.line }}{% endif %}</td><td>{{ o.customer }}</td><td>{{ o.requested_ship.strftime("%m/%d") if o.requested_ship else "—" }}</td><td class="num">{{ o.qty|num }}</td></tr>
         {% endfor %}
       </tbody>
+      <tfoot><tr><th scope="row" colspan="3">Total · {{ p.orders|length }} {{ "line" if p.orders|length == 1 else "lines" }}</th><td class="num">{{ p.so_qty|num }}</td></tr></tfoot>
     </table>
     {% endif %}
     {% if p.forecasts %}
@@ -184,6 +199,7 @@
         <tr><td class="code">{{ f.forecast_id }}</td><td>{{ f.date.strftime("%m/%d") if f.date else "—" }}</td><td>{{ f.plant }}</td><td class="num">{{ f.qty|num }}</td></tr>
         {% endfor %}
       </tbody>
+      <tfoot><tr><th scope="row" colspan="3">Total</th><td class="num">{{ p.forecast_qty|num }}</td></tr></tfoot>
     </table>
     {% endif %}
     {% if p.odi %}
@@ -195,6 +211,7 @@
         <tr><td class="code">{{ e.entry_id }}</td><td>{{ e.ref }} <span class="code">{{ "BUSS" if e.is_sales_order else "Oracle" }}</span></td><td class="num">{{ e.qty|num }}</td><td class="num">{{ e.allocated|num if e.allocated else "—" }}</td><td>{{ e.wo or "—" }}{% if e.wo %} · {{ e.wo_qty|num }}{% endif %}</td><td>{{ e.wrap_end.strftime("%m/%d %H:%M") if e.wrap_end else "—" }}</td></tr>
         {% endfor %}
       </tbody>
+      <tfoot><tr><th scope="row" colspan="2">Total · {{ p.odi|length }} {{ "row" if p.odi|length == 1 else "rows" }}</th><td class="num">{{ p.odi_demand|num }}</td><td class="num">{{ p.odi_allocated|num if p.odi_allocated else "—" }}</td><td colspan="2"></td></tr></tfoot>
     </table>
     {% endif %}
     {% if p.stock %}
@@ -206,6 +223,7 @@
         <tr><td>{{ st.facility }} {{ st.locator }}</td><td class="num">{{ st.on_hand|num }}</td><td class="num">{{ st.available|num }}</td><td class="num">{{ st.allocated|num }}</td></tr>
         {% endfor %}
       </tbody>
+      <tfoot><tr><th scope="row">Total</th><td class="num">{{ p.on_hand|num }}</td><td class="num">{{ p.available|num }}</td><td class="num">{{ p.allocated|num }}</td></tr></tfoot>
     </table>
     {% endif %}
     {% if p.work_orders %}
@@ -217,6 +235,7 @@
         <tr><td class="code">{{ w.wo }}</td><td>{{ w.line }}{% if w.shift %} · {{ w.shift }}{% endif %}</td><td>{{ w.status }}</td><td class="num">{{ w.demand_qty|num }}</td><td class="num">{{ w.wo_qty|num }}</td></tr>
         {% endfor %}
       </tbody>
+      <tfoot><tr><th scope="row" colspan="3">Total</th><td class="num">{{ p.mips_demand|num }}</td><td class="num">{{ p.wo_qty|num }}</td></tr></tfoot>
     </table>
     {% endif %}
   </details>

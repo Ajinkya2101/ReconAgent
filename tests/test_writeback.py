@@ -95,6 +95,37 @@ class WriteBackTest(unittest.TestCase):
         self.assertEqual(self.store.book.for_flag(flag_id)["status"], "Confirmed")
         return message
 
+    def test_one_source_error_is_one_discrepancy(self):
+        """S1 raises R02, R04 and R05 for the same 600 units: one discrepancy, led by where it entered."""
+        row = self.store.rows["76108"]
+        (d,) = row.discrepancies
+        self.assertEqual([f.id for f in d.flags], [FLAG, "R04-76108", "R05-76108"])
+        self.assertEqual((d.units, d.dollars), (600, max(f.dollars for f in d.flags)))
+
+    def test_separate_errors_stay_separate(self):
+        """The seed's 76105 has three unrelated flags, two of them for 100 units: three discrepancies."""
+        log = EventLog(Path(tempfile.mkdtemp(prefix="recon-wb-")) / "events.db")
+        seed.seed(log)
+        rows = Store(sources.EventFeed(log.path)).rows
+        self.assertEqual(sorted(len(d.flags) for d in rows["76105"].discrepancies), [1, 1, 1])
+        for row in rows.values():   # every seeded flag is its own discrepancy
+            self.assertEqual(len(row.discrepancies), len(row.flags))
+
+    def test_one_decision_covers_the_discrepancy(self):
+        row, d = self.store.decide_discrepancy("R05-76108", "reject", "Pat Planner", "checked with BUSS")
+        self.assertEqual({f.status for f in d.flags}, {"Rejected"})
+        self.assertFalse(row.is_open)
+        row, d = self.store.decide_discrepancy(FLAG, "accept", "Pat Planner")
+        self.assertEqual({f.status for f in d.flags}, {"Accepted - awaiting correction"})
+
+    def test_approving_a_discrepancy_sends_every_fix(self):
+        """ODI first, then the MIPS demand and work order: all three flags clear through the feed."""
+        _, said = self.store.approve_discrepancy(FLAG, "Pat Planner")
+        self.assertTrue(said)
+        self.assertFalse({FLAG, "R04-76108", "R05-76108"} & self.flags())
+        statuses = {c["flag_id"]: c["status"] for c in self.store.book.items.values()}
+        self.assertEqual(statuses.get(FLAG), "Confirmed")
+
     def test_approved_correction_is_confirmed_by_the_feed(self):
         _, f = self.store.find(FLAG)
         p = self.store.proposal(f)
@@ -208,8 +239,9 @@ class WriteBackTest(unittest.TestCase):
         sign_in(sup, "sam", "supervisor")
         self.assertEqual(sup.post(f"/flags/{FLAG}/correction").status_code, 403)
         detail = sup.get("/row/76108", headers={"HX-Request": "true"}).text
-        self.assertIn("Proposed correction", detail)
+        self.assertIn('<span class="code">ODI-0002</span> Quantity', detail)   # the proposed fix is shown
         self.assertIn("A planner or manager approves", detail)
+        self.assertNotIn("Approve and send", detail)
         planner = TestClient(app)
         sign_in(planner, "pat", "planner")
         r = planner.post("/api/corrections", json={"flag_id": FLAG})
