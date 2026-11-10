@@ -48,7 +48,7 @@ def flags(log: EventLog, stream: str = "events") -> set[str]:
 
 class ScenarioLibraryTest(unittest.TestCase):
     def test_every_scenario_raises_exactly_its_flags(self):
-        self.assertEqual(sorted(s.number for s in scenarios.SCENARIOS.values()), list(range(1, 11)))
+        self.assertEqual(sorted(s.number for s in scenarios.SCENARIOS.values()), list(range(1, 15)))
         for sid, sc in scenarios.SCENARIOS.items():
             with self.subTest(sid):
                 log = seeded_log()

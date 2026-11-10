@@ -42,6 +42,7 @@ class Projector:
         self.duplicates_ignored = 0
         self.stale_ignored = 0
         self.last_source_ts: dt.datetime | None = None
+        self.stock_history: dict[str, list[tuple[dt.datetime, float]]] = {}   # WMS row -> on-hand changes
 
     def catch_up(self) -> int:
         """Apply new events. Starts over if the log was reset. Returns how many were read."""
@@ -73,6 +74,11 @@ class Projector:
         else:
             table[ev.key] = contract.decode(contract.ENTITIES[ev.entity], ev.after)
             self.row_seq[ev.entity][ev.key] = ev.seq
+            if ev.entity == "wms.inventory":   # one snapshot per change of on hand: the ML layer's history
+                on_hand = table[ev.key].get("On hand")
+                snaps = self.stock_history.setdefault(ev.key, [])
+                if on_hand is not None and (not snaps or snaps[-1][1] != on_hand):
+                    snaps.append((ev.source_ts, float(on_hand)))
         self.last_source_ts = ev.source_ts
 
     def rows(self, entity: str) -> list[dict]:
@@ -80,8 +86,10 @@ class Projector:
         return [table[k] for k in sorted(table)]
 
     def source_data(self) -> ingest.SourceData:
-        return ingest.build(
+        src = ingest.build(
             {name: self.rows(name) for name in contract.ENTITIES},
             files={name: f"event log #{self.seq} · {name} ({len(self.tables[name])} rows)"
                    for name in contract.ENTITIES},
             as_of=self.clock.now())
+        src.stock_history = {k: list(v) for k, v in self.stock_history.items()}
+        return src

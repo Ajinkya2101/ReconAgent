@@ -204,8 +204,13 @@ class ProjectorTest(unittest.TestCase):
 
     def test_arrival_order_does_not_change_the_result(self):
         changes = seed.build()
-        shuffled = changes[:]
-        random.Random(7).shuffle(shuffled)
+        # Rows arrive in any order; each row's own changes (a WMS count history) stay in sequence.
+        rng = random.Random(7)
+        rank = {}
+        key = lambda c: (c.entity, c.key or str(c.row[contract.entity(c.entity).key]))
+        for c in changes:
+            rank.setdefault(key(c), rng.random())
+        shuffled = sorted(changes, key=lambda c: rank[key(c)])
         results = []
         for batch in (changes, shuffled):
             log = fresh_log()
@@ -308,7 +313,7 @@ class WorkbookFeedTest(unittest.TestCase):
         self.assertEqual(feed.position(), 0.0)
         write_workbook(seeded_log(), data / "new_dummy_data" / "BIMBO_MIPS_WMS_ODI_Data_TEST.xlsx")
         self.assertGreater(feed.position(), 0.0)
-        self.assertEqual(len(feed.load().sales_orders), 18)
+        self.assertEqual(len(ingest.split_current(feed.load()).sales_orders), 18)   # the rest is history
 
     def test_the_price_column_before_10_nov_is_still_read(self):
         old, new = ({"Order Number": 1, k: 3.5} for k in ("Price", "Price in $"))
@@ -342,7 +347,8 @@ class BusinessWorkbookTest(unittest.TestCase):
 
         p = Projector(seeded_log())
         p.catch_up()
-        workbook, seeded = records(sources.ExcelFeed().load()), records(p.source_data())
+        workbook = records(ingest.split_current(sources.ExcelFeed().load()))
+        seeded = records(ingest.split_current(p.source_data()))   # the seed's earlier days are ML history
         for part in workbook:
             with self.subTest(part=part):
                 self.assertEqual(seeded[part], workbook[part])

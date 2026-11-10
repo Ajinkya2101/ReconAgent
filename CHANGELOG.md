@@ -6,6 +6,19 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+### Added: the ML layer (R14-R17) and its scenarios (S11-S14)
+- **Anomaly detection against each item's own history** (`recon_agent/anomaly.py`), robust z-scores (median/MAD):
+  R14 unusual order quantity for the customer, R15 forecast bias, R16 production anomaly (wrap duration), R17 inventory
+  drift (unexplained change in WMS on hand). Flagged at |z| >= 3.5 (High at 7) with at least 6 earlier values; both are
+  settings (`RECON_ML_Z`, `RECON_ML_MIN_HISTORY`). They catch what the rules cannot: a wrong value every system agrees on.
+- **History.** Reconciliation reads only the current sales day (`ingest.split_current`); earlier days in the same tables
+  are the ML history. WMS history is the row's change log in the event feed. The seed adds 8 earlier Saturdays (314 events).
+  A single-day workbook raises no ML flags.
+- **Scenarios S11-S14** (labelled "ML layer" in the simulator): an order keyed with an extra zero, a doubled forecast, a
+  line at half speed, stock vanishing overnight; each keeps the systems consistent, so only the ML flag fires.
+- ML flags carry accountability (origin likely, failure type Statistical anomaly) and are labelled "From the ML layer".
+- **Fixed:** corrections and the exported `v_sku_position` view read the current sales day only, not earlier days.
+
 ## [0.3.1] - 2026-11-10
 
 ### Changed: source changes wait for Update again

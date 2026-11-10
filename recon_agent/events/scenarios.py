@@ -48,6 +48,7 @@ class Scenario:
     steps: list[Step]
     appears: tuple[str, ...]                         # flag IDs raised on the untouched starting day (tests)
     clears: tuple[str, ...] = ()
+    layer: str = "Rules"                             # "Rules" (systems disagree) or "ML" (anomaly.py)
 
 
 def U(entity: str, key: str, note: str | None = None, **cols) -> Change:
@@ -62,9 +63,27 @@ def D(entity: str, key: str, note: str | None = None) -> Change:
     return Change(entity, "D", key, note=note)
 
 
+def C(entity: str, key: str, cols: dict, note: str | None = None) -> Change:
+    """An update with column names that are not identifiers ("Forecast / Order Quantity")."""
+    return Change(entity, "U", key, cols, note=note)
+
+
 def add(n: float) -> Callable:
     """A quantity change relative to what the row holds when the step runs."""
     return lambda current: (current or 0) + n
+
+
+def later(**delta) -> Callable:
+    """A date-time moved relative to what the row holds when the step runs (later(minutes=90))."""
+    return lambda current: dt.datetime.fromisoformat(str(current)) + dt.timedelta(**delta) if current else current
+
+
+def carry_through(qty: float, say_mips: str) -> list[Step]:
+    """MIPS re-plans 76108's work order by `qty` and ODI takes the new quantity on every row of it, so
+    the systems agree again and no rule fires: what the ML layer catches, the rules cannot."""
+    return [Step(say_mips, [C("mips.work_order", WO1, {"Work Order Quantity": add(qty)})]),
+            Step("ODI takes the new work-order quantity on every row of the work order.",
+                 [U("odi.batch_mapping", k, Work_Order_Quantity=add(qty)) for k in ODI_ON_WO])]
 
 
 WO1 = "WO-UBD-{date}-001"                            # 76108's work order
@@ -150,6 +169,53 @@ SCENARIOS: dict[str, Scenario] = {s.id: s for s in (
         [Step("BUSS sends the order with the wrong code.",
               [U("buss.sales_order", "2263257-1", FG_BUSS_Code="2717")])],
         ("R13-76108",)),
+
+    # --- The ML layer (anomaly.py): every system agrees, so no rule fires; the value is far outside
+    # the item's own history of the last eight sales days.
+    Scenario(
+        "S11", 11, "An order keyed with an extra zero passes through every system",
+        "ALBANY NY BAKERY's 76108 order 2263245 is keyed as 72,000 instead of 7,200. BUSS, ODI and MIPS all carry "
+        "it, so the systems agree and no rule fires. Only the ML layer sees an order ten times this customer's usual.",
+        ("76108",),
+        [Step("BUSS records the order at 72,000.", [U("buss.sales_order", "2263245-1", Order_Quantity=add(64800),
+                                                      note="keyed 72,000 for 7,200")]),
+         Step("ODI maps it at 72,000.", [U("odi.batch_mapping", "ODI-0002", Quantity=add(64800))]),
+         Step("MIPS plans the demand it now sees.",
+              [C("mips.work_order", WO1, {"Forecast / Order Quantity": add(64800)})]),
+         *carry_through(64800, "MIPS raises the work order by 64,800 to the new shortfall.")],
+        ("R14-2263245-1",), layer="ML"),
+    Scenario(
+        "S12", 12, "Oracle doubles a forecast; every system follows it",
+        "A planning run doubles 76108's Oracle forecast FC001 from 41,769 to 83,538. ODI and MIPS follow it, so the "
+        "systems agree and no rule fires. Only the ML layer sees a forecast twice any of the last eight Saturdays.",
+        ("76108",),
+        [Step("Oracle saves the doubled forecast.",
+              [C("oracle.forecast", "FC001", {"Forecast / Required Quantity": add(41769)}, note="planning run")]),
+         Step("ODI maps the new forecast.", [U("odi.batch_mapping", "ODI-0001", Quantity=add(41769))]),
+         Step("MIPS plans the demand it now sees.",
+              [C("mips.work_order", WO1, {"Forecast / Order Quantity": add(41769)})]),
+         *carry_through(41769, "MIPS raises the work order by 41,769 to the new shortfall.")],
+        ("R15-FC001",), layer="ML"),
+    Scenario(
+        "S13", 13, "Line 1 runs at half speed",
+        "76108's work order takes 9 h 44 min to wrap instead of the usual 4 h 34 min. Wrapping still ends before "
+        "every requested ship date, so no rule fires. Only the ML layer sees a wrap twice as long as any in the last "
+        "eight weeks.",
+        ("76108",),
+        [Step("ODI records the late wrap end on every row of the work order.",
+              [U("odi.batch_mapping", k, Wrapping_End_Date_Time=later(minutes=310)) for k in ODI_ON_WO])],
+        ("R16-WO-UBD-20260912-001",), layer="ML"),
+    Scenario(
+        "S14", 14, "Stock vanishes overnight; the books still balance",
+        "WMS books 3,000 fewer 76108 buns on hand and available, with no shipment or production behind it, and MIPS "
+        "re-plans the work order for the bigger shortfall. Every system balances, so no rule fires. Only the ML layer "
+        "sees a stock move ten times larger than any day in the last week.",
+        ("76108",),
+        [Step("WMS books 3,000 fewer on hand and available.",
+              [U("wms.inventory", "INV-0001", On_hand=add(-3000), Available_quantity=add(-3000),
+                 note="no shipment or production")]),
+         *carry_through(3000, "MIPS raises the work order by 3,000 for the bigger shortfall.")],
+        ("R17-INV-0001",), layer="ML"),
 )}
 
 
@@ -187,7 +253,7 @@ def sales_date_of(log: EventLog) -> dt.date:
     p = Projector(log, stream="source")
     p.catch_up()
     dates = [r["Sales Date"] for r in p.rows("buss.sales_order") if r["Sales Date"]]
-    return max(set(dates), key=dates.count).date() if dates else dt.date.today()
+    return max(dates).date() if dates else dt.date.today()   # the newest day: earlier ones are history
 
 
 def run(log: EventLog, scenario: Scenario, pause: float = 0.0,

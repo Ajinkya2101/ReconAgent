@@ -72,9 +72,32 @@ WO_COLUMNS = ("Work Order Number", "Work Order Date", "Work Order Quantity", "It
               "Oracle Type", "Oracle Formula", "MIPS Description", "MIPS Sched Batches", "Act Batches Mixed")
 
 
+DAY_COLUMNS = {"buss.sales_order": ("Sales Date",), "oracle.forecast": ("Forecast Date",),
+               "odi.batch_mapping": ("Product Sales Date", "Schedule Date"), "mips.work_order": ("Production Date",)}
+
+
+def _day(row: dict, entity: str):
+    v = next((row.get(c) for c in DAY_COLUMNS.get(entity, ()) if row.get(c)), None)
+    return v.date() if isinstance(v, dt.datetime) else v
+
+
+def current_tables(tables: dict[str, dict[str, dict]]) -> dict[str, dict[str, dict]]:
+    """The rows of the sales day being reconciled: earlier days are the ML layer's history, and a
+    correction must never pick a row from them (ingest.split_current does the same for the engine)."""
+    days = [_day(r, e) for e in ("buss.sales_order", "oracle.forecast") for r in tables[e].values()]
+    days = [d for d in days if d]
+    if not days:
+        return tables
+    today = max(days)
+    return {e: ({k: r for k, r in rows.items() if not (_day(r, e) and _day(r, e) < today)}
+                if e in DAY_COLUMNS else rows) for e, rows in tables.items()}
+
+
 def propose(f: Finding, tables: dict[str, dict[str, dict]], now: dt.datetime) -> Proposal | None:
     """The source change that resolves `f`, or None when the rule has no automatic correction."""
     ev = f.evidence
+    every = tables                    # all rows: a new key must not clash with a past day's row
+    tables = current_tables(tables)
     if f.rule == "R01":   # the demand line never reached ODI: map it to the SKU's work order
         template = next((r for r in _odi_rows(tables, f.sku) if r["Work Order Number"]), None)
         if template is None:
@@ -84,7 +107,7 @@ def propose(f: Finding, tables: dict[str, dict[str, dict]], now: dt.datetime) ->
         if src is None:
             return None
         date = src["Sales Date"] if is_so else src["Forecast Date"]
-        key = _next_key(tables["odi.batch_mapping"], "ODI-")
+        key = _next_key(every["odi.batch_mapping"], "ODI-")
         row = {**{c: _j(template[c]) for c in WO_COLUMNS}, "ODI Entry ID": key, "Plant Code": template["Plant Code"],
                "Schedule Date": _j(template["Schedule Date"]),
                "Source System": "BUSS" if is_so else "OCloud Region2", "BUSS Sales / Forcast Date": _j(date),
@@ -131,8 +154,8 @@ def propose(f: Finding, tables: dict[str, dict[str, dict]], now: dt.datetime) ->
         plant = next((r["Plant Code"] for r in odi if r["Plant Code"]), None) or next(
             (fc["Plant"] for fc in tables["oracle.forecast"].values()
              if norm_sku(fc["Item Number"]) == f.sku and fc["Plant"]), "PLANT")
-        wo = refs[0] if refs and refs[0] not in tables["mips.work_order"] else _next_key(
-            tables["mips.work_order"], f"WO-{plant}-{sales:%Y%m%d}-")
+        wo = refs[0] if refs and refs[0] not in every["mips.work_order"] else _next_key(
+            every["mips.work_order"], f"WO-{plant}-{sales:%Y%m%d}-")
         line = next((r for r in odi if r["Prod Line"]), {})
         p_demand = ev["total_demand"] - ev["wms_allocated"]
         row = {"Production Date": _j(sales), "Work Order Number": wo, "FG Oracle Ref": f.sku,
@@ -170,7 +193,8 @@ def propose(f: Finding, tables: dict[str, dict[str, dict]], now: dt.datetime) ->
                         f"Link ODI row {f.key} to work order {w['Work Order Number']}: {ev['demand_line']}.")
     # Deliberately no automatic correction where the fix needs a fact only a person can establish:
     # R09 (which order holds the stock), R10 (which WMS figure the count proves wrong), R11 (why the
-    # plant mixed more), R12 (move the run or the ship date), R13 (which code is right).
+    # plant mixed more), R12 (move the run or the ship date), R13 (which code is right), and the ML
+    # flags R14-R17 (an outlier is not proof of an error: a person confirms the value first).
     return None
 
 

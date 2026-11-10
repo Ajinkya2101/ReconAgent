@@ -32,7 +32,13 @@ RULES = {
     "R11": ("Batches mixed differ from the MIPS schedule", "7 - Produce, then wrap", "Order-to-Batch Traceability", "Low"),
     "R12": ("Finished goods wrapped after the requested ship date", "8 - Move FG to WMS", "Production Visibility", "High"),
     "R13": ("Item codes differ between systems", "Master data", "Data Flow Transparency", "Low"),
+    # The ML layer (anomaly.py): today against the item's own history, robust z-score.
+    "R14": ("Order quantity unusual for this customer", "ML - Capture demand", "Anomaly Detection", "Medium"),
+    "R15": ("Forecast out of line with its history", "ML - Capture demand", "Anomaly Detection", "Medium"),
+    "R16": ("Wrap duration unusual for this item", "ML - Produce, then wrap", "Anomaly Detection", "Medium"),
+    "R17": ("Unexplained change in WMS stock", "ML - Check available stock", "Anomaly Detection", "Medium"),
 }
+ML_RULES = ("R14", "R15", "R16", "R17")
 
 SEVERITY_WEIGHT = {"High": 3.0, "Medium": 2.0, "Low": 1.0}
 

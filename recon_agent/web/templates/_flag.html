@@ -21,7 +21,7 @@
     <span class="flag-qty"><b>{{ f.units|abs|num }}</b> {{ "unit" if f.units|abs|round == 1 else "units" }} · {{ money_or_dash(f.dollars) }}</span>
   </header>
 
-  <p class="flag-explain"><span class="src">{{ "AI explanation · " ~ config.OCI_MODEL_ID if by_ai else "From the rules" }}</span>{{ f.narrative or f.recommendation }}</p>
+  <p class="flag-explain"><span class="src">{{ "AI explanation · " ~ config.OCI_MODEL_ID if by_ai else ("From the ML layer · robust z-score against this item's history" if f.area == "Anomaly Detection" else "From the rules") }}</span>{{ f.narrative or f.recommendation }}</p>
   {% if acc %}
   <p class="flag-origin">
     <span>Started in {% if acc.origin == "Undetermined" %}<b>an undetermined system</b>{% else %}<b class="code">{{ acc.origin }}</b>{% if acc.handoff %}, at the {{ acc.handoff }} hand-off{% endif %}{% endif %}</span>

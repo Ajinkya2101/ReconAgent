@@ -13,7 +13,7 @@
       {% for sc in SCENARIOS.values() %}
       <li class="sc" id="sc-{{ sc.id }}">
         <header class="sc-head">
-          <span class="sc-num">Scenario {{ sc.number }}</span>
+          <span class="sc-num">Scenario {{ sc.number }}{% if sc.layer == "ML" %} · ML layer{% endif %}</span>
           <h2>{{ sc.title }}</h2>
         </header>
         <p class="sc-story">{{ sc.story }}</p>

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import openpyxl
@@ -120,6 +120,7 @@ class OdiEntry:
     act_batches: float
     batch_status: str
     sku: str = ""                 # resolved by the engine: the item of the demand line it maps
+    sales_date: dt.date | None = None   # Product Sales Date (else Schedule Date): the day it belongs to
 
     @property
     def is_sales_order(self) -> bool:
@@ -166,6 +167,11 @@ class SourceData:
     work_orders: list[WorkOrder]
     files: dict[str, str]
     as_of: dt.datetime | None = None   # event feed: simulated time of the projection
+    # Earlier sales days, kept out of reconciliation and read by the ML layer (anomaly.py); set by
+    # split_current. WMS rows carry no date, so their history is their change log in the event feed:
+    # inventory ID -> [(time, on hand)], one entry per change of on hand (empty for a workbook).
+    history: "SourceData | None" = None
+    stock_history: dict[str, list[tuple[dt.datetime, float]]] = field(default_factory=dict)
 
 
 # --- record mappers ----------------------------------------------------------
@@ -220,7 +226,8 @@ def odi_entries(records: list[dict]) -> list[OdiEntry]:
             wrap_end=r.get("Wrapping End Date Time"), line=text(r.get("Prod Line")), shift=text(r.get("Shift")),
             oracle_type=text(r.get("Oracle Type")), mips_description=text(r.get("MIPS Description")),
             sched_batches=num(r.get("MIPS Sched Batches")), act_batches=num(r.get("Act Batches Mixed")),
-            batch_status=text(r.get("Batch Status"))))
+            batch_status=text(r.get("Batch Status")),
+            sales_date=as_date(r.get("Product Sales Date")) or as_date(r.get("Schedule Date"))))
     return out
 
 
@@ -247,6 +254,37 @@ def work_orders(records: list[dict]) -> list[WorkOrder]:
         wo_qty=num(r.get("Work Order Quantity")), start=as_date(r.get("Work order start date")),
         completion=as_date(r.get("Work Order Completion Date")), status=text(r.get("Work Order Status")))
         for r in records if r.get("Work Order Number") is not None]
+
+
+def current_sales_date(src: SourceData) -> dt.date | None:
+    """The day being reconciled: the newest sales date among the BUSS orders and Oracle forecasts."""
+    dates = [o.sales_date for o in src.sales_orders if o.sales_date] + [f.date for f in src.forecasts if f.date]
+    return max(dates) if dates else None
+
+
+def split_current(src: SourceData) -> SourceData:
+    """The current sales day's rows, with every earlier day's rows moved to `history`.
+
+    Reconciliation (the 13 rules) only ever sees one sales day; the earlier days are what the ML
+    layer compares it with. A row with no date belongs to the current day. WMS stock and the item
+    master have no sales date and stay current."""
+    day = current_sales_date(src)
+    if day is None or src.history is not None:
+        return src
+
+    def past(d):
+        return d is not None and d < day
+
+    return replace(
+        src,
+        sales_orders=[o for o in src.sales_orders if not past(o.sales_date)],
+        forecasts=[f for f in src.forecasts if not past(f.date)],
+        odi=[e for e in src.odi if not past(e.sales_date)],
+        work_orders=[w for w in src.work_orders if not past(w.production_date)],
+        history=replace(
+            src, sales_orders=[o for o in src.sales_orders if past(o.sales_date)],
+            forecasts=[f for f in src.forecasts if past(f.date)], odi=[e for e in src.odi if past(e.sales_date)],
+            work_orders=[w for w in src.work_orders if past(w.production_date)], stock=[], stock_history={}))
 
 
 def build(rows: dict[str, list[dict]], files: dict[str, str], as_of: dt.datetime | None = None) -> SourceData:

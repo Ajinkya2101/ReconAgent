@@ -21,6 +21,13 @@ only a forecast is planned in Oracle, not yet scheduled, and gets no position.
 Dates follow the sales date S (Saturday 12 Sep 2026, as in the workbook): orders and
 forecasts are for S, ODI requested ship dates are S-1 or S-2, and 76108 wrapped on S-3.
 The clock starts the evening before the sales day.
+
+History for the ML layer (recon_agent/anomaly.py): the same three SKUs on the HISTORY_DAYS
+earlier Saturdays, in the same tables: each customer's orders, the forecast, a completed
+work order and its ODI wrap row, with ordinary week-to-week variation (a fixed random seed).
+Reconciliation only reads day S, so the history raises no rule flags; today's values sit
+inside their history, so the seed raises no ML flags either. WMS rows carry no date: their
+history is the row's own change log, one stock count a day for the days before S.
 """
 from __future__ import annotations
 
@@ -75,6 +82,29 @@ SHIP_TO = {   # customer -> Ship-To Location (USA), as in the workbook
     "MILLBURY MA (LATTI FARM RD) DISTRIBUTION CENTER": "Millbury, MA, USA",
     "WILMINGTON MA DISTRIBUTION CENTER": "Wilmington, MA, USA",
 }
+
+
+HISTORY_DAYS = 8   # earlier sales days (the same weekday, a week apart) seeded as the ML layer's history
+# Week-to-week variation, as multipliers of today's value. Each pattern's median is exactly 1, so
+# today sits in the middle of its history (robust z about 0) and a demo edit of a few percent stays
+# normal; each series takes the pattern from a different week, so the series do not move together.
+ORDER_PATTERN = (0.92, 1.05, 0.97, 1.08, 0.95, 1.03, 0.90, 1.06)      # customer orders, about +-8%
+FORECAST_PATTERN = (0.96, 1.04, 0.98, 1.05, 0.94, 1.02, 0.97, 1.03)   # forecasts, about +-4%
+WRAP_PATTERN = (0.97, 1.03, 0.99, 1.04, 0.96, 1.02, 0.98, 1.01)       # wrap duration, about +-2.5%
+# Daily change of WMS on hand as a share of today's on hand, oldest first; the last is today's count.
+STOCK_STEPS = (0.02, -0.03, 0.01, -0.015, 0.035, -0.02, 0.025, -0.01)
+# Customers whose orders swing a lot from week to week (multiplier of today's order, by weeks back),
+# so that a large order from them is normal: BBU_LANCASTER NY CMB orders anywhere from 90 to 1,000.
+LUMPY = {"BBU_LANCASTER NY CMB": (3.1, 0.7, 7.4, 1.2, 5.5, 1.0, 6.7, 0.9)}
+
+
+def history_order_number(order: str, weeks_back: int) -> str:
+    """A distinct, same-length order number for the order this customer placed `weeks_back` weeks ago."""
+    return str(int(order) - weeks_back * 10 ** (len(order) - 3))
+
+
+def _week(pattern: tuple, weeks_back: int, series: int) -> float:
+    return pattern[(weeks_back - 1 + series) % len(pattern)]
 
 
 def wo_number(sales_date: dt.date, n: int) -> str:
@@ -215,13 +245,74 @@ def build(sales_date: dt.date = DEFAULT_SALES_DATE) -> list[Change]:
         for order, _, qty, ship_days, allocated, odi_qty in c["orders"]:
             odi("BUSS", order, 1, qty if odi_qty is None else odi_qty, ship_days, allocated)
 
-        # --- WMS stock ------------------------------------------------------------
+        # --- WMS stock: a daily count for HISTORY_DAYS days, then today's ---------------
         on_hand, available, allocated = c["stock"][:3]
+        inv = f"INV-{inv_n:04d}"
+        levels = [on_hand]                               # back from today's count, one day at a time
+        for share in reversed(STOCK_STEPS):
+            levels.append(levels[-1] - round(on_hand * share))
+        levels.reverse()                                 # oldest first; the last one is today's
         add("wms.inventory", {
-            "Inventory ID": f"INV-{inv_n:04d}", "Item Number": sku, "Item Description": desc, "On hand": on_hand,
-            "Available quantity": available, "Allocated quantity": allocated, "UOM": "Units", "Item Type": "FG",
-            "Facility": PLANT_CODE, "Company / Inventory Organization": f"{PLANT_CODE}.1", "Locator": c["stock"][3]},
-            _at(S, 1, 14))
+            "Inventory ID": inv, "Item Number": sku, "Item Description": desc, "On hand": levels[0],
+            "Available quantity": levels[0] - allocated, "Allocated quantity": allocated, "UOM": "Units",
+            "Item Type": "FG", "Facility": PLANT_CODE, "Company / Inventory Organization": f"{PLANT_CODE}.1",
+            "Locator": c["stock"][3]}, _at(S, HISTORY_DAYS + 1, 14))
+        for days_before, level in zip(range(HISTORY_DAYS, 1, -1), levels[1:-1]):
+            changes.append(Change("wms.inventory", "U", inv, {"On hand": level, "Available quantity": level - allocated},
+                                  source_ts=_at(S, days_before, 14), scenario=SCENARIO))
+        changes.append(Change("wms.inventory", "U", inv, {"On hand": on_hand, "Available quantity": available,
+                                                          "Allocated quantity": allocated},
+                              source_ts=_at(S, 1, 14), scenario=SCENARIO))
+
+    # --- History for the ML layer: the same weekday, HISTORY_DAYS earlier weeks ------------
+    for s_n, (sku, c) in enumerate(SKUS.items()):
+        desc = ITEM_MASTER[sku][0]
+        fid, base_fc = c["forecast"], FORECASTS[c["forecast"]][1]
+        demand_left, wo_qty = c["mips"]
+        (ws_d, ws_h, ws_m), (we_d, we_h, we_m) = c["wrap"]
+        wrap_minutes = (_at(S, we_d, we_h, we_m) - _at(S, ws_d, ws_h, ws_m)).total_seconds() / 60
+        orders_today = sum(o[2] for o in c["orders"])
+        for k in range(1, HISTORY_DAYS + 1):
+            D = S - dt.timedelta(weeks=k)
+            total = 0
+            for o_n, (order, customer, qty, *_) in enumerate(c["orders"]):
+                m = LUMPY[customer][k - 1] if customer in LUMPY else _week(ORDER_PATTERN, k, s_n + o_n)
+                q = max(round(qty * m), 1)
+                total += q
+                num = history_order_number(order, k)
+                add("buss.sales_order", {
+                    "SO Line ID": f"{num}-1", "Order Number": num, "Order Line": 1, "Order Type": "DSD_SALES_ORDER",
+                    "Order Date": D, "Customer Name": customer, "Ship-To Location (USA)": SHIP_TO[customer],
+                    "FG BUSS Code": c["buss"], "Item Number": sku, "Item Description": desc, "UOM": "Units",
+                    "Order Quantity": q, "Requested Ship Date": D, "Sales Date": D, "Price in $": c["price"]},
+                    _at(D, 3, 10))
+            fc_q = round(base_fc * _week(FORECAST_PATTERN, k, s_n))
+            h_fid = f"{fid}-{D:%m%d}"
+            add("oracle.forecast", {"Forecast ID": h_fid, "Forecast Date": D, "Item Number": sku,
+                                    "Item Description": desc, "UOM": "Units", "Item Type": "FG", "Plant": PLANT_CODE,
+                                    "Forecast / Required Quantity": fc_q}, _at(D, 5, 15, 32))
+            factor = (total + fc_q) / (orders_today + base_fc)
+            h_wo, h_wo_qty = wo_number(D, c["wo"]), round(wo_qty * factor)
+            add("mips.work_order", {
+                "Production Date": D, "Work Order Number": h_wo, "FG Oracle Ref": sku, "FG BUSS Code": c["buss"],
+                "FG Description": desc, "Forecast / Order Quantity": round(demand_left * factor),
+                "Prod Line": c["line"], "Shift": c["shift"], "Scheduling Errors": None,
+                "Work Order Quantity": h_wo_qty, "Work order start date": D, "Work Order Completion Date": D,
+                "Work Order Status": "Completed"}, _at(D, 4, 6))
+            start = _at(D, ws_d, ws_h, ws_m)
+            end = start + dt.timedelta(minutes=round(wrap_minutes * _week(WRAP_PATTERN, k, s_n)))
+            odi_n += 1
+            add("odi.batch_mapping", {
+                "ODI Entry ID": f"ODI-{odi_n:04d}", "Plant Code": PLANT_CODE, "Schedule Date": D,
+                "Source System": "OCloud Region2", "BUSS Sales / Forcast Date": D, "Product Sales Date": D,
+                "Requested Ship Date": D - dt.timedelta(days=c["forecast_ship"]), "Sales Order / Forcast Date": D,
+                "Sales Order Number / Forcast": h_fid, "SO Line number": None, "Quantity": fc_q,
+                "Allocated quantity for SO": None, "Work Order Number": h_wo, "Work Order Date": D,
+                "Work Order Quantity": h_wo_qty, "Item Number": sku, "Wrapping Start Date Time": start,
+                "Wrapping End Date Time": end, "Plant Name": PLANT_NAME, "Prod Line": c["line"], "Shift": c["shift"],
+                "Oracle Type": c["oracle_type"], "Oracle Formula": c["formula"], "MIPS Description": c["mips_desc"],
+                "MIPS Sched Batches": c["batches"][0], "Act Batches Mixed": c["batches"][0], "Batch Status": None},
+                end + dt.timedelta(minutes=30))
 
     changes.sort(key=lambda c: c.source_ts)   # publish in the order things happened at the plant
     return changes

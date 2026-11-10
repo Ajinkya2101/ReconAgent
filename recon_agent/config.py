@@ -42,6 +42,10 @@ DAY_CODES = {
     6: ("SUN", "#6a46a8", "#ffffff"),
 }
 HIGH_ACK_MINUTES = 15
+# ML layer (anomaly.py): a value is an outlier at |robust z| >= ML_Z_THRESHOLD (High at twice that),
+# judged only with at least ML_MIN_HISTORY earlier values of the same item.
+ML_Z_THRESHOLD = float(os.environ.get("RECON_ML_Z", "3.5"))
+ML_MIN_HISTORY = int(os.environ.get("RECON_ML_MIN_HISTORY", "6"))
 WEB_POLL_SECONDS = 20        # fallback poll; open screens normally hear of changes by server push
 WEB_WATCH_SECONDS = 0.5 if SOURCE_MODE == "events" else 2.0   # how often the server checks the feed
 

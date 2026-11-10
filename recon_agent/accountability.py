@@ -269,8 +269,54 @@ def _r13(f, p, ev):
          "ODI": ("To check", ev["issues"])})
 
 
+# --- The ML layer: a value every system agrees on, far outside its own history ----------------
+
+def _level(x: float) -> str:
+    """A history median as people read it: 4.6 hours, 7,200 units."""
+    return f"{abs(x):,.1f}" if abs(x) < 100 and abs(x) != int(abs(x)) else _n(abs(x))
+
+
+def _ml(f, ev, origin, impact, own, others):
+    """An outlier is not proof of an error, so the attribution is "likely": if the value is wrong, it
+    entered in the origin system and the others carried it."""
+    side = "above" if ev["robust_z"] > 0 else "below"
+    return _record(
+        f, impact, origin, "Statistical anomaly",
+        f"{own[1]}: far {side} its history (robust z {abs(ev['robust_z']):.1f} against {ev['history_points']} "
+        f"earlier values, median {_level(ev['history_median'])}).", "likely",
+        {origin: ("Misfired", own[1] + f", far {side} its usual value."), **others})
+
+
+def _r14(f, p, ev):
+    return _ml(f, ev, "BUSS", "Over-production" if f.units > 0 else "Under-production",
+               ("BUSS", f"Order {ev['order']} from {ev['customer']} for {_n(ev['quantity'])}"),
+               {"ODI": ("Affected", "Maps the order as BUSS sent it."),
+                "MIPS": ("Affected", "Plans production for it.")})
+
+
+def _r15(f, p, ev):
+    return _ml(f, ev, "Oracle", "Over-production" if f.units > 0 else "Under-production",
+               ("Oracle", f"Forecast {ev['forecast']} of {_n(ev['quantity'])}"),
+               {"ODI": ("Affected", "Maps the forecast as Oracle holds it."),
+                "MIPS": ("Affected", "Sizes the work order from it.")})
+
+
+def _r16(f, p, ev):
+    return _ml(f, ev, "ODI", "Short shipment" if ev["robust_z"] > 0 else "Data integrity",
+               ("ODI", f"Work order {ev['work_order']} wrapped in {ev['wrap_hours']} hours"),
+               {"MIPS": ("To check", "Later work orders on the line may slip.")})
+
+
+def _r17(f, p, ev):
+    return _ml(f, ev, "WMS", "Data integrity",
+               ("WMS", f"{ev['inventory']} on hand {'rose' if ev['change'] > 0 else 'fell'} by "
+                       f"{_n(abs(ev['change']))} in one change"),
+               {"MIPS": ("Affected", "The shortfall and the work order are sized from this stock.")})
+
+
 BY_RULE = {"R01": _r01, "R02": _r02, "R03": _r03, "R04": _r04, "R05": _r05, "R06": _r06, "R07": _r07,
-           "R08": _r08, "R09": _r09, "R10": _r10, "R11": _r11, "R12": _r12, "R13": _r13}
+           "R08": _r08, "R09": _r09, "R10": _r10, "R11": _r11, "R12": _r12, "R13": _r13,
+           "R14": _r14, "R15": _r15, "R16": _r16, "R17": _r17}
 
 
 def attribute(f: Finding, p: SkuPosition | None = None) -> dict:

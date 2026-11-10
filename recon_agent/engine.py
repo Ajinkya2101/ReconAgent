@@ -1,4 +1,4 @@
-"""Pipeline: ingest -> reconcile -> detect -> learn -> rank -> explain."""
+"""Pipeline: ingest -> reconcile -> detect (rules, then the ML layer) -> learn -> rank -> explain."""
 from __future__ import annotations
 
 import datetime as dt
@@ -6,7 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import accountability, ai, detectors, feedback, ingest, position, sources
+from . import accountability, ai, anomaly, detectors, feedback, ingest, position, sources
 from .detectors import Finding
 from .position import SkuPosition
 
@@ -69,8 +69,9 @@ def run(data_dir: Path | None = None, use_ai: bool | None = None,
         src: ingest.SourceData | None = None) -> RunResult:
     """Run the pipeline on `src`, or on whatever the configured feed (RECON_SOURCE) holds now."""
     src = src or sources.open_feed(data_dir).load()
+    src = ingest.split_current(src)   # one sales day is reconciled; earlier days are the ML layer's history
     positions = position.build_positions(src)
-    findings = detectors.run_all(src, positions)
+    findings = detectors.run_all(src, positions) + anomaly.detect(src, positions)
     findings = feedback.apply(findings)
     findings.sort(key=lambda f: f.priority, reverse=True)
     accountability.assign(findings, positions)

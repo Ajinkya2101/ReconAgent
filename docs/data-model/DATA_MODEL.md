@@ -96,8 +96,36 @@ These parts stay as they were: severity, priority (`$ at risk × severity × lea
 accountability records, AI explanations with figure checks and audit, planner decisions, claims,
 acknowledgments and the write-back state machine.
 
-The old R17 statistical outlier check is removed. It needs eight or more runs to work, and the new
-data has one work order per SKU.
+## 4a. The ML layer (R14-R17): today against the item's own history
+
+The 13 rules check that the systems agree with each other. They cannot see a value that every system agrees on but
+that is wrong: an order keyed with an extra zero that BUSS, ODI and MIPS all carried through. The ML layer
+(`recon_agent/anomaly.py`) compares the current sales day with the same item's earlier sales days and flags what lies
+far outside its normal range.
+
+| Rule | Detector | Compares | Against |
+|---|---|---|---|
+| R14 | Unusual order quantity | Each BUSS order line today | The same customer's orders of the item on earlier sales days |
+| R15 | Forecast bias | The Oracle forecast today | The item's forecasts on earlier sales days |
+| R16 | Production anomaly | Today's work order's wrap duration (from ODI) | The item's earlier work orders |
+| R17 | Inventory drift | The latest change in WMS on hand | The row's earlier changes |
+
+**Method.** The modified z-score of Iglewicz and Hoaglin: z = (value - median) / scale, the scale being 1.4826 × the
+median absolute deviation (MAD), or 1.2533 × the mean absolute deviation when the MAD is 0. Median and MAD are robust,
+so one earlier outlier cannot hide the next. A value is flagged at |z| >= 3.5 (`RECON_ML_Z`) and is High at |z| >= 7;
+nothing is judged with fewer than 6 earlier values (`RECON_ML_MIN_HISTORY`).
+
+**History.** Reconciliation reads only the current sales day: the newest date among the BUSS orders and Oracle forecasts
+(`ingest.split_current`). Rows of earlier days in the same tables are the history, and raise no rule flags. WMS rows
+carry no date, so their history is the row's own change log in the event feed: one snapshot each time on hand changes.
+The business workbook holds a single day, so it raises no ML flags until it carries several days.
+
+**Flags.** ML flags are ordinary flags: ranked, explained by the AI, decided and audited like the rest. The explanation
+is labelled "From the ML layer". Accountability names the system where the value entered, with the basis *likely* (an
+outlier is not proof of an error), and the failure type *Statistical anomaly*. There is no automatic correction: a
+person confirms the value first.
+
+The v2 R17 (outliers across 86 production runs of one day) was removed with v3; R14-R17 replace it with history per item.
 
 **Out of scope:** the raw-material checks in the workbook's notes ("if FG is not available check
 on hand for components, then inbound for RM"). The item master lists the RM items, but the workbook
@@ -113,7 +141,13 @@ has no bill of materials and no RM stock or inbound. The checks can be added onc
 
 The other seven FG items and the nine RM items in the item master are loaded as master data only.
 
-## 6. Scenarios (simulator), all on the clean SKU 76108 (ten)
+**History for the ML layer:** the same three SKUs on the 8 earlier Saturdays (18 Jul to 5 Sep 2026):
+each customer's orders, the forecast, a completed work order and its ODI wrap row, varying from week to week by a fixed
+pattern whose median is today's value (orders about ±8%, forecasts ±4%, wrap time ±2.5%; BBU_LANCASTER NY CMB orders swing
+from 90 to 1,000). WMS stock gets one count a day for the 8 days before the sales day. Today's values sit in the middle of
+their history (|z| below 0.6), so the seed raises no ML flags. The seed publishes 314 events.
+
+## 6. Scenarios (simulator), all on the clean SKU 76108 (fourteen)
 
 | ID | Story | Raises |
 |---|---|---|
@@ -128,7 +162,17 @@ The other seven FG items and the nine RM items in the item master are loaded as 
 | S9 | An ODI reload drops the work order from one demand line | R08 |
 | S10 | An order arrives from BUSS with a mistyped item code | R13 |
 
-Each scenario is also a regression test (`tests/test_scenarios.py`).
+The ML layer's scenarios keep every system consistent, so no rule fires and only the ML flag shows what the rules miss.
+The simulator labels them "ML layer".
+
+| ID | Story | Raises |
+|---|---|---|
+| S11 | An order keyed with an extra zero (7,200 -> 72,000) passes through BUSS, ODI and MIPS | R14 (z +110) |
+| S12 | Oracle doubles 76108's forecast (41,769 -> 83,538); ODI and MIPS follow it | R15 (z +19) |
+| S13 | Line 1 runs at half speed: the wrap takes 9 h 44 min instead of 4 h 34 min | R16 (z +32) |
+| S14 | WMS books 3,000 fewer on hand and available overnight; MIPS re-plans; the books balance | R17 (z -14) |
+
+Each scenario is also a regression test (`tests/test_scenarios.py`; the ML layer in `tests/test_anomaly.py`).
 
 ## 7. What changes in the code
 

@@ -130,15 +130,15 @@ class SimulatorTest(unittest.TestCase):
 
     def test_insert_copy_and_delete(self):
         r = self.client.get("/t/odi.batch_mapping/new?clone=ODI-0002")
-        self.assertIn('value="ODI-0022"', r.text)   # next free key in the entity's pattern (21 seeded rows)
-        data = self.form("odi.batch_mapping", "ODI-0002", **{"ODI Entry ID": "ODI-0022", "Quantity": 500})
+        self.assertIn('value="ODI-0046"', r.text)   # next free key: 21 rows today, 24 earlier days (ML history)
+        data = self.form("odi.batch_mapping", "ODI-0002", **{"ODI Entry ID": "ODI-0046", "Quantity": 500})
         r = self.client.post("/t/odi.batch_mapping/new", data=data)
         self.assertIn("Published event", r.text)
-        self.assertIsNotNone(self.log.current("odi.batch_mapping", "ODI-0022"))
+        self.assertIsNotNone(self.log.current("odi.batch_mapping", "ODI-0046"))
         r = self.client.post("/t/odi.batch_mapping/new", data=data)
         self.assertIn("already exists", r.text)
-        self.client.post("/t/odi.batch_mapping/delete/ODI-0022", data={"note": "keyed by mistake"})
-        self.assertIsNone(self.log.current("odi.batch_mapping", "ODI-0022"))
+        self.client.post("/t/odi.batch_mapping/delete/ODI-0046", data={"note": "keyed by mistake"})
+        self.assertIsNone(self.log.current("odi.batch_mapping", "ODI-0046"))
 
     def test_clock_controls(self):
         self.client.post("/clock", data={"action": "pause"})

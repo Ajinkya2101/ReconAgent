@@ -31,15 +31,20 @@ HEAD = PatternFill("solid", fgColor="1F3A5F")
 
 # The equation in SQL, so a database client recomputes the position from whatever the tables hold.
 VIEW = """CREATE VIEW v_sku_position AS
-WITH so AS (SELECT item_number AS sku, SUM(order_quantity) AS sales_orders, COUNT(*) AS order_lines
-            FROM buss_sales_order GROUP BY item_number),
+WITH cur AS (SELECT MAX(d) AS sales_day FROM (SELECT sales_date AS d FROM buss_sales_order
+                                               UNION ALL SELECT forecast_date FROM oracle_forecast) x),
+     so AS (SELECT item_number AS sku, SUM(order_quantity) AS sales_orders, COUNT(*) AS order_lines
+            FROM buss_sales_order WHERE sales_date IS NULL OR sales_date = (SELECT sales_day FROM cur)
+            GROUP BY item_number),
      wms AS (SELECT item_number AS sku, SUM(on_hand) AS on_hand, SUM(available_quantity) AS available,
                     SUM(allocated_quantity) AS allocated FROM wms_inventory GROUP BY item_number),
      wo AS (SELECT fg_oracle_ref AS sku, SUM(forecast_order_quantity) AS mips_demand,
-                   SUM(work_order_quantity) AS work_order_qty FROM mips_work_order GROUP BY fg_oracle_ref),
+                   SUM(work_order_quantity) AS work_order_qty FROM mips_work_order
+            WHERE production_date IS NULL OR production_date = (SELECT sales_day FROM cur) GROUP BY fg_oracle_ref),
      skus AS (SELECT sku FROM so UNION SELECT sku FROM wms UNION SELECT sku FROM wo),
      fc AS (SELECT item_number AS sku, SUM(forecast_required_quantity) AS forecast
-            FROM oracle_forecast GROUP BY item_number),
+            FROM oracle_forecast WHERE forecast_date IS NULL OR forecast_date = (SELECT sales_day FROM cur)
+            GROUP BY item_number),
      base AS (SELECT s.sku, i.item_description AS description,
                      COALESCE(so.order_lines, 0) AS order_lines, COALESCE(so.sales_orders, 0) AS sales_orders,
                      COALESCE(fc.forecast, 0) AS forecast, COALESCE(wms.on_hand, 0) AS on_hand,

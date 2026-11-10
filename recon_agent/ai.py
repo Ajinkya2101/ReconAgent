@@ -377,7 +377,8 @@ def narrate_with_model(top: list[Finding], kpis: dict) -> dict:
 
 OWNER_BY_RULE = {"R01": OWNERS[3], "R02": OWNERS[3], "R03": OWNERS[3], "R04": OWNERS[0], "R05": OWNERS[0],
                  "R06": OWNERS[0], "R07": OWNERS[3], "R08": OWNERS[0], "R09": OWNERS[2], "R10": OWNERS[2],
-                 "R11": OWNERS[1], "R12": OWNERS[1], "R13": OWNERS[4]}
+                 "R11": OWNERS[1], "R12": OWNERS[1], "R13": OWNERS[4],
+                 "R14": OWNERS[0], "R15": OWNERS[0], "R16": OWNERS[1], "R17": OWNERS[2]}
 
 
 def offline_narration(findings: list[Finding], kpis: dict) -> dict:
@@ -420,7 +421,7 @@ TOOLS = [
         name="list_findings",
         description="List reconciliation findings, highest priority first. All filters optional.",
         parameters={"type": "object", "properties": {
-            "rule": {"type": "string", "description": 'Rule code R01-R13 (e.g. "R05" work order not sized to the shortfall, "R02" ODI quantity stale).'},
+            "rule": {"type": "string", "description": 'Rule code R01-R17 (e.g. "R05" work order not sized to the shortfall, "R02" ODI quantity stale; R14-R17 are statistical anomalies from the ML layer).'},
             "severity": {"type": "string", "enum": ["High", "Medium", "Low"]},
             "sku": {"type": "string", "description": "Restrict to one SKU."},
             "limit": {"type": "integer", "description": "Maximum findings to return (default 20)."}}}),
