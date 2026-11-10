@@ -1,5 +1,5 @@
 # Server deployment: the worklist, plus optional TLS (Caddy) and the source simulator.
-# See docs/DEPLOYMENT.md.
+# See docs/engineering/DEPLOYMENT.md.
 #
 #   docker compose up -d --build                         worklist on http://127.0.0.1:8000
 #   docker compose --profile tls up -d                   + HTTPS on RECON_DOMAIN (ports 80/443)

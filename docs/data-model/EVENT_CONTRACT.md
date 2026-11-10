@@ -9,7 +9,7 @@ How source-system changes reach the reconciliation agent as events during the PO
 - **Phase 4:** the scenario library.
 - **Phase 5:** integration faults and write-back.
 
-**Status:** POC. All event data is dummy data, built from the business team's 9 Nov mapping workbook ([DATA_MODEL_9NOV.md](DATA_MODEL_9NOV.md)). [Section 6](#6-assumptions-to-confirm-with-bimbo-it) lists every assumption about BUSS, Oracle, MIPS, ODI and WMS that the real integrations must confirm. The code holds the authoritative version: [recon_agent/events/contract.py](../recon_agent/events/contract.py).
+**Status:** POC. All event data is dummy data, built from the business team's 9 Nov mapping workbook ([DATA_MODEL.md](DATA_MODEL.md)). [Section 6](#6-assumptions-to-confirm-with-bimbo-it) lists every assumption about BUSS, Oracle, MIPS, ODI and WMS that the real integrations must confirm. The code holds the authoritative version: [recon_agent/events/contract.py](../../recon_agent/events/contract.py).
 
 ## 1. Why events
 
@@ -176,7 +176,7 @@ The test suite asserts that the seed raises exactly these five flags (`seed.EXPE
 
 ## 8. Scenario library
 
-Ten scenarios as scripts ([events/scenarios.py](../recon_agent/events/scenarios.py)), each breaking one step of
+Ten scenarios as scripts ([events/scenarios.py](../../recon_agent/events/scenarios.py)), each breaking one step of
 the demand-to-delivery flow for the clean SKU 76108, so its flags visibly appear on the worklist. Steps go
 through the normal producer path, so active faults apply.
 
@@ -216,7 +216,7 @@ A fault can be scoped to a system and/or entity, and limited to a number of chan
 
 ## 10. Write-back (corrections)
 
-This closes the product's Phase 2 loop in the POC: **Flagged → Proposed → Approved → Sent → Confirmed**, with **Failed → Retry** and **Cancelled**. See [recon_agent/corrections.py](../recon_agent/corrections.py).
+This closes the product's Phase 2 loop in the POC: **Flagged → Proposed → Approved → Sent → Confirmed**, with **Failed → Retry** and **Cancelled**. See [recon_agent/corrections.py](../../recon_agent/corrections.py).
 
 **1. Proposed.** In event mode, a flag whose fix is clear shows a *Proposed correction* on the worklist,
 computed from the rows the worklist currently sees:
@@ -264,7 +264,7 @@ python -m recon_agent events export --out output/export   # the source systems n
 On PowerShell, set `$env:RECON_SOURCE="events"` first. Write-back needs the simulator running at `RECON_CORRECTIONS_URL`. The simulator's delivery pump is what delivers delayed changes, so keep it running when faults are active (CLI commands also deliver what is due when they run).
 
 **Simulator:** sign in with a worklist account (username and password; set `RECON_CORRECTIONS_TOKEN` before sharing the URL). Dummy data only; never run it next to a production worklist. It has:
-- **Tables:** one tab per entity, showing source truth, with an editor. No column is derived in v3 ([events/derive.py](../recon_agent/events/derive.py)).
+- **Tables:** one tab per entity, showing source truth, with an editor. No column is derived in v3 ([events/derive.py](../../recon_agent/events/derive.py)).
 - **Source changes:** each change's column diff and its delivery state (event #, delayed, held, dropped, duplicate copy, on worklist).
 - **Clock controls** and **worklist lag and latency**.
 - **Scenarios** and **Integration** tabs.

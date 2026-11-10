@@ -1,6 +1,6 @@
 # Simulation Dummy Data, Explained
 
-> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL_9NOV.md](../DATA_MODEL_9NOV.md) and [EVENT_CONTRACT.md](../EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
+> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL.md](../../../data-model/DATA_MODEL.md) and [EVENT_CONTRACT.md](../../../data-model/EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
 
 What the synthetic dataset contains, which columns link the tables, and what happens in the other systems when one system's data changes.
 
@@ -15,7 +15,7 @@ Related files in this folder:
 - [SCENARIO_WALKTHROUGH.md](SCENARIO_WALKTHROUGH.md): every seeded problem and scenario S1–S8 worked through with column names, calculations and the rules that flag them. [SCENARIO_WALKTHROUGH_PLAIN.md](SCENARIO_WALKTHROUGH_PLAIN.md) is the same in plain language.
 - [SOURCE_DATA_MAPPING.md](SOURCE_DATA_MAPPING.md): how closely this data matches the client extracts in `data/`, column by column, and how data flows from either source to the worklist.
 
-The source code is [seed.py](../../recon_agent/events/seed.py) (the starting day), [scenarios.py](../../recon_agent/events/scenarios.py) (S1–S8), [derive.py](../../recon_agent/events/derive.py) (calculated columns) and [contract.py](../../recon_agent/events/contract.py) (tables and columns).
+The source code is [seed.py](../../../../recon_agent/events/seed.py) (the starting day), [scenarios.py](../../../../recon_agent/events/scenarios.py) (S1–S8), [derive.py](../../../../recon_agent/events/derive.py) (calculated columns) and [contract.py](../../../../recon_agent/events/contract.py) (tables and columns).
 
 ## 1. The 8 tables
 
@@ -158,7 +158,7 @@ The seed then gives each SKU one deliberate mismatch between MIPS, ODI and WMS. 
 
 ### Within the same row: updates automatically
 
-[derive.py](../../recon_agent/events/derive.py) recomputes these columns whenever a row is edited, the way the source system itself would:
+[derive.py](../../../../recon_agent/events/derive.py) recomputes these columns whenever a row is edited, the way the source system itself would:
 
 | Table | You change | Recomputed in the same row |
 |---|---|---|
@@ -174,7 +174,7 @@ The seed then gives each SKU one deliberate mismatch between MIPS, ODI and WMS. 
 
 If you raise `Order Qty` on a WMS item line, the MIPS line, the ODI run and even the WMS order header all stay as they were. Other tables change only in four ways:
 
-1. **A scenario script** changes several tables in one step ([scenarios.py](../../recon_agent/events/scenarios.py)).
+1. **A scenario script** changes several tables in one step ([scenarios.py](../../../../recon_agent/events/scenarios.py)).
 2. **Someone edits them by hand** in the simulator. The one helper is **"Rebuild totals from item lines"**, which resets a `wms.order` header to the sum of its item lines.
 3. **An approved correction** (write-back) changes the other system. For example, the R09 fix sets the MIPS line to match WMS.
 4. **The seed**, but only once, when it builds the starting day.

@@ -1,6 +1,6 @@
 """Mismatch detectors: one rule per step of the demand-to-delivery flow.
 
-The flow (docs/DATA_MODEL_9NOV.md): capture demand from BUSS orders and the Oracle
+The flow (docs/data-model/DATA_MODEL.md): capture demand from BUSS orders and the Oracle
 forecast, remove the stock WMS has allocated, subtract what WMS has available, size
 the MIPS work order to the shortfall, map every demand line to that work order in
 ODI, produce and wrap before the ship date. Each rule checks that one system holds

@@ -1,6 +1,7 @@
 # Data model v3: the 9 Nov business mapping
 
-**Status:** implemented on branch `data-model-9nov`. It replaces the data model built from the five
+**Status:** the data model of `main` since v0.3.0 (10 Nov 2026), and the only one in the codebase. It
+replaces the v2 data model built from the five
 client extracts of 12 Sep 2026 (MIPS Order Data, ODI Finished Good / Batch Data, WMS Fill Rate and
 Order Summary by Item).
 
@@ -119,7 +120,7 @@ The other seven FG items and the nine RM items in the item master are loaded as 
 | S1 | A customer raises a BUSS order; ODI is not refreshed | R02, R04, R05 |
 | S2 | A new BUSS order line never reaches ODI | R01, R04, R05 |
 | S3 | A customer cancels in BUSS; ODI keeps the line | R03, R04, R05 |
-| S4 | WMS allocates more stock to an order; ODI and MIPS keep the old figure | R09, R04, R05 |
+| S4 | WMS allocates more stock to an order; ODI and MIPS keep the old figure | R09, R04 |
 | S5 | MIPS re-plans the work order; ODI keeps the old quantity | R05, R07 |
 | S6 | A WMS cycle count changes on hand only | R10 |
 | S7 | The line runs late: wrapping ends after the requested ship dates | R12 |
@@ -149,7 +150,6 @@ Each scenario is also a regression test (`tests/test_scenarios.py`).
 
 ## 8. Delivery
 
-1. Commit the open work on `main` (done: `aa4afa9`).
-2. Implement on `data-model-9nov`, with all tests passing.
-3. Deploy the branch to the demo VM as the main application (worklist :8003, simulator :8103),
-   reseed the event log, and smoke-test sign-in, the seed flags and one scenario with write-back.
+Done. The model was built on the branch `data-model-9nov` (9 to 10 Nov 2026), deployed to the demo VM
+(worklist :8003, simulator :8103), and released as v0.3.0, when `main` moved to it and the branch was
+deleted. See [REPOSITORY_HISTORY.md](../engineering/REPOSITORY_HISTORY.md).

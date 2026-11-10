@@ -5,7 +5,7 @@
     Shortfall      = Demand left  - Available stock (WMS)        -> MIPS Work Order Quantity
     Check          = Work order + Available + Allocated = Total demand
 
-For 76108 on 12 Sep 2026: (14,339 + 41,769) - 473 - 7,000 = 48,635 (docs/DATA_MODEL_9NOV.md).
+For 76108 on 12 Sep 2026: (14,339 + 41,769) - 473 - 7,000 = 48,635 (docs/data-model/DATA_MODEL.md).
 All on-hand stock is kept in WMS only, so when available stock covers the demand left the
 shortfall is 0 and the surplus simply stays in WMS.
 

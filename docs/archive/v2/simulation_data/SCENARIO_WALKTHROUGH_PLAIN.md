@@ -1,6 +1,6 @@
 # What Goes Wrong in the Simulation, and How the Agent Spots It
 
-> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL_9NOV.md](../DATA_MODEL_9NOV.md) and [EVENT_CONTRACT.md](../EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
+> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL.md](../../../data-model/DATA_MODEL.md) and [EVENT_CONTRACT.md](../../../data-model/EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
 
 A plain-language walk through every problem in the practice data, with the numbers worked out step by step. The detailed technical version is [SCENARIO_WALKTHROUGH.md](SCENARIO_WALKTHROUGH.md).
 

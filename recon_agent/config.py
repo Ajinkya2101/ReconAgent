@@ -7,13 +7,13 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 # The source workbook (the business team's 9 Nov mapping, one sheet per source) is found anywhere
-# under data/ (see docs/DATA_MODEL_9NOV.md).
+# under data/ (see docs/data-model/DATA_MODEL.md).
 DATA_DIR = Path(os.environ.get("RECON_DATA_DIR", PROJECT_ROOT / "data"))
 OUTPUT_DIR = PROJECT_ROOT / "output"
 WORKBOOK_GLOB = os.environ.get("RECON_WORKBOOK_GLOB", "**/BIMBO_MIPS_WMS_ODI_Data*.xlsx")
 
 # Source of the data: "excel" reads the workbook in DATA_DIR; "events" projects the simulated
-# event log (recon_agent/events, docs/EVENT_CONTRACT.md). Event mode keeps its log, planner
+# event log (recon_agent/events, docs/data-model/EVENT_CONTRACT.md). Event mode keeps its log, planner
 # decisions and reports in output/sim/, so simulated decisions never shift the rule confidence
 # learned on real data.
 SOURCE_MODE = os.environ.get("RECON_SOURCE", "excel").strip().lower()
@@ -45,7 +45,7 @@ HIGH_ACK_MINUTES = 15
 WEB_POLL_SECONDS = 20        # fallback poll; open screens normally hear of changes by server push
 WEB_WATCH_SECONDS = 0.5 if SOURCE_MODE == "events" else 2.0   # how often the server checks the feed
 
-# Sign-in (username and password) and sessions. See recon_agent/users.py and docs/DEPLOYMENT.md.
+# Sign-in (username and password) and sessions. See recon_agent/users.py and docs/engineering/DEPLOYMENT.md.
 USERS_FILE = Path(os.environ.get("RECON_USERS_FILE", OUTPUT_DIR / "users.json"))
 SECRET_KEY = os.environ.get("RECON_SECRET_KEY", "")   # signs session cookies; random per process if empty
 SESSION_HOURS = float(os.environ.get("RECON_SESSION_HOURS") or 12)

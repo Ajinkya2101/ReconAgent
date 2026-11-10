@@ -4,12 +4,12 @@ Each event is one row-level change (insert, update or delete) in one source
 entity, shaped like a GoldenGate CDC record: an operation, the row key, and full
 before/after row images. Row images use the business team's own column names
 from the 9 Nov mapping workbook (BIMBO_MIPS_WMS_ODI_Data, one sheet per entity;
-see docs/DATA_MODEL_9NOV.md), with whitespace normalised, so ingest.py maps event
+see docs/data-model/DATA_MODEL.md), with whitespace normalised, so ingest.py maps event
 rows and workbook rows with the same code.
 
 Where a sheet has no row identifier, the contract adds one synthetic key column
 (marked below). Those are assumptions to confirm with Bimbo IT; see
-docs/EVENT_CONTRACT.md.
+docs/data-model/EVENT_CONTRACT.md.
 
 v4 follows the 10 Nov revision of the workbook: the BUSS price column is `Price in $`
 (it was `Price`, and empty). A log written under v3 is recreated empty: seed it again.

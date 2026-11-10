@@ -1,6 +1,6 @@
 # Client Extracts vs Simulation Data: Mapping and Data Flow
 
-> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL_9NOV.md](../DATA_MODEL_9NOV.md) and [EVENT_CONTRACT.md](../EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
+> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL.md](../../../data-model/DATA_MODEL.md) and [EVENT_CONTRACT.md](../../../data-model/EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
 
 How the simulation's dummy data maps to the five client extracts in `data/`, how closely it matches them, and how data flows from either source to the worklist.
 
@@ -8,7 +8,7 @@ How the simulation's dummy data maps to the five client extracts in `data/`, how
 
 > The client files are not in Git (`.gitignore`: "Client data … never committed"), so this document gives **formats, patterns and counts only**: no client item numbers, names, quantities or prices. All worked examples use dummy data.
 
-Related: [DUMMY_DATA_EXPLAINED.md](DUMMY_DATA_EXPLAINED.md) (what the dummy data contains), [EVENT_CONTRACT.md](../EVENT_CONTRACT.md) (the event format).
+Related: [DUMMY_DATA_EXPLAINED.md](DUMMY_DATA_EXPLAINED.md) (what the dummy data contains), [EVENT_CONTRACT.md](../../../data-model/EVENT_CONTRACT.md) (the event format).
 
 ---
 
@@ -32,7 +32,7 @@ The dummy data **matches the client extracts in structure, and in most conventio
 
 ## 2. Data flow
 
-The two paths, the daily Excel extracts and the simulated event feed, meet at the **record mappers** in [ingest.py](../../recon_agent/ingest.py). The mappers take rows keyed by the **client's own column names**. That is why the dummy data has to use exactly the client's columns: the same code then reads both.
+The two paths, the daily Excel extracts and the simulated event feed, meet at the **record mappers** in [ingest.py](../../../../recon_agent/ingest.py). The mappers take rows keyed by the **client's own column names**. That is why the dummy data has to use exactly the client's columns: the same code then reads both.
 
 ```mermaid
 flowchart TB
@@ -54,7 +54,7 @@ flowchart TB
 
 ### Batch mode (client extracts)
 
-1. **Find the files.** [config.SOURCES](../../recon_agent/config.py) holds one name pattern per extract. If several files match, the last by name wins.
+1. **Find the files.** [config.SOURCES](../../../../recon_agent/config.py) holds one name pattern per extract. If several files match, the last by name wins.
 2. **Read the active sheet** as values (`_rows`).
 3. **Find the header row** by its first cell: `Plant Code` (MIPS), `PlantName` (both ODI files) or `Facility` (Fill Rate). This skips the two title rows ("Printed On: …" and the sheet name) at the top of the MIPS and ODI files (`_table`).
 4. **Fill Rate:** the `Total:` row (in the `Order Type` column) is taken out and kept as `fill_report_total` (`load_fill_rate`).
@@ -64,10 +64,10 @@ flowchart TB
 ### Simulation (dummy data)
 
 1. **A producer** makes a change: an insert, update or delete of one row, using the client's column names. Producers are the seed, a scenario step, the simulator's editor, `events set`, or an approved correction.
-2. **`derive()`** recomputes the columns the source system would calculate itself ([derive.py](../../recon_agent/events/derive.py)).
-3. **`contract.validate`** checks it against the column list, which mirrors the extract headers ([contract.py](../../recon_agent/events/contract.py)).
+2. **`derive()`** recomputes the columns the source system would calculate itself ([derive.py](../../../../recon_agent/events/derive.py)).
+3. **`contract.validate`** checks it against the column list, which mirrors the extract headers ([contract.py](../../../../recon_agent/events/contract.py)).
 4. **The event log** stores the change in `source_changes` (the systems' truth). Delivery to `events` can be delayed, dropped, duplicated or reordered when a fault is active.
-5. **The projector** applies delivered events to one table per entity. It skips duplicates and stale images, and returns rows **sorted by row key** ([projector.py](../../recon_agent/events/projector.py)). Key order stands in for the extract's line order, which matters for R01 ("inventory applied to the first line").
+5. **The projector** applies delivered events to one table per entity. It skips duplicates and stale images, and returns rows **sorted by row key** ([projector.py](../../../../recon_agent/events/projector.py)). Key order stands in for the extract's line order, which matters for R01 ("inventory applied to the first line").
 6. **`projector.source_data()`** passes those rows to the **same record mappers**. A live feed has no printed report total, so `fill_report_total` is the sum of the `wms.order` headers.
 
 From `SourceData` onwards, both paths are identical.
@@ -91,7 +91,7 @@ A *synthetic* key does not exist in the client file. The contract adds it so a c
 
 ## 4. Column mapping, extract by extract
 
-**Engine field** is the attribute in [ingest.py](../../recon_agent/ingest.py); "—" means the engine carries the column but never reads it. **Match** compares the client format with the dummy format:
+**Engine field** is the attribute in [ingest.py](../../../../recon_agent/ingest.py); "—" means the engine carries the column but never reads it. **Match** compares the client format with the dummy format:
 
 - ✅ same
 - ◐ same convention, narrower range
@@ -259,7 +259,7 @@ The padded `raw_sku` is kept only so R15 can report it. Everything else uses `sk
 | ODI `FG-0001` | `NetUnitsOrdered` 9,000, `ActualWrappedUnits` 9,000 |
 | WMS `WL-0001`–`WL-0003` | 5,000 + 3,000 + 2,000 = **10,000** ordered and allocated |
 
-What the engine works out ([position.py](../../recon_agent/position.py)):
+What the engine works out ([position.py](../../../../recon_agent/position.py)):
 
 - Implied inventory = 11,300 − 9,000 sent to production = **2,300**.
 - Net requirement = 11,300 − 2,300 − 9,000 = **0**: the item is covered.

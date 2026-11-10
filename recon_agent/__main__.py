@@ -11,7 +11,7 @@
     python -m recon_agent --version
 
 RECON_SOURCE=events makes run, ask, feedback and serve read the simulated event
-log instead of the source workbook (see docs/EVENT_CONTRACT.md).
+log instead of the source workbook (see docs/data-model/EVENT_CONTRACT.md).
 """
 from __future__ import annotations
 

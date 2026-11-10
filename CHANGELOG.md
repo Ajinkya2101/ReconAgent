@@ -2,9 +2,16 @@
 
 All notable changes to this project. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project uses [Semantic Versioning](https://semver.org/). The version lives in
-`recon_agent/__init__.py`; release by tagging the commit `vX.Y.Z` (see docs/DEPLOYMENT.md).
+`recon_agent/__init__.py`; release by tagging the commit `vX.Y.Z` (see docs/engineering/DEPLOYMENT.md).
 
 ## [Unreleased]
+
+### Changed: the docs folder, by audience
+- `docs/data-model/` (data model, event contract, data inconsistencies), `docs/guides/` (user and
+  systems guides, screenshots), `docs/engineering/` (technical overview, deployment, repository
+  history). `DATA_MODEL_9NOV.md` is now `docs/data-model/DATA_MODEL.md`.
+- The v2 documents (five-extract model) moved to `docs/archive/v2/`. `docs/README.md` indexes what is
+  current. Every link and code reference follows the new paths.
 
 ### Removed: the last of the v2 carry-forward
 - The v3 data model keeps all surplus in WMS, so no rule carries units to the next sales day. The empty
@@ -39,7 +46,7 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
   counts on the order served from allocated stock (now checked against the workbook when it is present).
   The invented SKUs get prices: 76105 $4.69, 950513 $4.99. The same five flags are raised, with dollar values
   at these prices. Scenario S2's new order carries $4.69.
-- **Data questions.** [docs/Data_Inconsistencies_9Nov.pdf](docs/Data_Inconsistencies_9Nov.pdf) lists the
+- **Data questions.** [docs/data-model/Data_Inconsistencies_9Nov.pdf](docs/data-model/Data_Inconsistencies_9Nov.pdf) lists the
   workbook's own inconsistencies, with values, for the business team. No rule changes until they answer.
 
 ### Fixed: every figure and explanation follows the source data live
@@ -64,7 +71,7 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ### Changed: data model v3 (the business team's 9 Nov mapping)
 The agent no longer replicates the five client extracts. It uses the business team's demand-to-delivery
-mapping (`BIMBO_MIPS_WMS_ODI_Data_9th_NOV.xlsx`; see [docs/DATA_MODEL_9NOV.md](docs/DATA_MODEL_9NOV.md)).
+mapping (`BIMBO_MIPS_WMS_ODI_Data_9th_NOV.xlsx`; see [docs/data-model/DATA_MODEL.md](docs/data-model/DATA_MODEL.md)).
 - **Sources and contract v3.** Six entities, one per workbook sheet: `oracle.item`, `buss.sales_order`,
   `oracle.forecast`, `odi.batch_mapping`, `wms.inventory` and `mips.work_order`. BUSS is now a source system
   of its own. The Excel feed reads the one workbook from anywhere under `data/`. An event log written under
@@ -129,7 +136,7 @@ mapping (`BIMBO_MIPS_WMS_ODI_Data_9th_NOV.xlsx`; see [docs/DATA_MODEL_9NOV.md](d
   starting day for the next demo. Clears the event log and re-publishes the seed, and clears the
   simulation's decisions, claims and acknowledgments. Other open screens are told to reload.
   `POST /simulation/reset`.
-- Simulation data documentation (`docs/simulation_data/`) and the application guide PDF.
+- Simulation data documentation (`docs/archive/v2/simulation_data/`) and the application guide PDF.
 
 ### Fixed
 - R09 when MIPS plans more than WMS has on order (found on the demo by raising 900102's
@@ -186,7 +193,7 @@ Deployment readiness: the worklist can be shared with several people on a server
 - `docker-compose.yml` with optional TLS (Caddy) and simulator profiles, read-only containers.
 - GitHub Actions: tests and image build on every push and pull request; on a `vX.Y.Z` tag, the image
   is published to GitHub Container Registry with a GitHub release.
-- `pyproject.toml`, `requirements-dev.txt`, `docs/DEPLOYMENT.md`.
+- `pyproject.toml`, `requirements-dev.txt`, `docs/engineering/DEPLOYMENT.md`.
 
 ### Changed
 - The sign-in screen asks for a username and password; the role is no longer chosen there.

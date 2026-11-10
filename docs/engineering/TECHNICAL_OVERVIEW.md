@@ -1,8 +1,8 @@
 # Inventory Reconciliation Agent: Technical Overview
 
-> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL_9NOV.md](DATA_MODEL_9NOV.md) and [EVENT_CONTRACT.md](EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
+> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL.md](../data-model/DATA_MODEL.md) and [EVENT_CONTRACT.md](../data-model/EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
 
-What the application does, how it is built, and the stack it runs on. For the planner and business view, see [USER_GUIDE.md](USER_GUIDE.md).
+What the application does, how it is built, and the stack it runs on. For the planner and business view, see [USER_GUIDE.md](../guides/USER_GUIDE.md).
 
 ## 1. What the application does
 
@@ -24,8 +24,8 @@ It then runs deterministic rules to find mismatches: R01–R17 on the daily extr
 
 The core design rule is **rules compute, AI explains**. Every quantity comes from deterministic Python code and carries its evidence. The LLM (Gemini 2.5 Pro on OCI Generative AI) only writes explanation text, root cause, owner and the shift briefing. If the model is unavailable, the pipeline falls back to rule-generated text and loses no functionality.
 
-**Phase 1 (current):** read-only. Inputs are five daily Excel extracts, or (POC, `RECON_SOURCE=events`) a simulated real-time event feed with synthetic data. See [EVENT_CONTRACT.md](EVENT_CONTRACT.md). Outputs are a web worklist, an Excel workbook, an HTML dashboard and a JSON file.
-**Phase 2 (planned):** real-time feeds and approved write-back to source systems. See section 10. The POC already runs both against simulated systems: see [EVENT_CONTRACT.md](EVENT_CONTRACT.md) sections 9–10.
+**Phase 1 (current):** read-only. Inputs are five daily Excel extracts, or (POC, `RECON_SOURCE=events`) a simulated real-time event feed with synthetic data. See [EVENT_CONTRACT.md](../data-model/EVENT_CONTRACT.md). Outputs are a web worklist, an Excel workbook, an HTML dashboard and a JSON file.
+**Phase 2 (planned):** real-time feeds and approved write-back to source systems. See section 10. The POC already runs both against simulated systems: see [EVENT_CONTRACT.md](../data-model/EVENT_CONTRACT.md) sections 9–10.
 
 ## 2. Architecture
 
@@ -66,13 +66,13 @@ flowchart LR
 
 ### Pipeline (`engine.run`)
 
-1. **Ingest** ([ingest.py](../recon_agent/ingest.py)) reads each extract with openpyxl into typed dataclasses (`MipsLine`, `FgRun`, `BatchRun`, `WmsItem`, `WmsFillOrder`). It normalises join keys: it strips padding and leading zeros from FG numbers and parses the block-layout WMS Order Summary report. Downstream code never sees source quirks. The record mappers (`mips_lines`, `fg_runs`, `batch_runs`, `wms_items`, `fill_orders`) take rows keyed by the extract column names, so the event feed reuses them. [sources.py](../recon_agent/sources.py) picks the feed: `ExcelFeed` (the extracts) or `EventFeed`, which projects the event log in [events/](../recon_agent/events/) into the same `SourceData`. Nothing downstream changes.
-2. **Reconcile** ([position.py](../recon_agent/position.py)) groups everything by SKU into a `SkuPosition`. Demand is consolidated across *all* MIPS lines before inventory is applied. This fixes the root cause of scenario 1 (inventory applied to the first line only). Inventory applied is inferred as the demand the first active run was ordered against, less that run's order. On the event feed the projector keeps each MIPS line's quantity history and the source position at which each run's order was last set (`Projector.demand_at_order`, with the seed as the opening snapshot), so a demand change after the order moves the net requirement one for one and never reads as inventory. The extracts have no history, so there the demand is today's. Returns are the larger of the return transactions and the ticket's returned quantity, per ticket. `propose_allocation` applies inventory and then production across lines by priority: earliest sales date first, sales orders before supply plan. Any leftover becomes a carry-forward.
-3. **Detect**: [detectors.py](../recon_agent/detectors.py) holds the SKU-level rules (R01, R02, R05–R11, R16) and the run/plant-level rules (R03/R04 ghost and blind runs, R12/R13 WMS report checks, R14 batches, R15 key hygiene). [anomaly.py](../recon_agent/anomaly.py) adds R17: a modified z-score on median/MAD (Iglewicz & Hoaglin), with the scale floored at the mean absolute deviation, applied to wrap overrun % and final piece variance.
-4. **Learn** ([feedback.py](../recon_agent/feedback.py)): each rule has a Beta(1,1) prior over planner acceptance. Confidence is the posterior mean normalised so an unseen rule scores 1.0. A rejected finding whose units are unchanged is suppressed on the next run.
+1. **Ingest** ([ingest.py](../../recon_agent/ingest.py)) reads each extract with openpyxl into typed dataclasses (`MipsLine`, `FgRun`, `BatchRun`, `WmsItem`, `WmsFillOrder`). It normalises join keys: it strips padding and leading zeros from FG numbers and parses the block-layout WMS Order Summary report. Downstream code never sees source quirks. The record mappers (`mips_lines`, `fg_runs`, `batch_runs`, `wms_items`, `fill_orders`) take rows keyed by the extract column names, so the event feed reuses them. [sources.py](../../recon_agent/sources.py) picks the feed: `ExcelFeed` (the extracts) or `EventFeed`, which projects the event log in [events/](../../recon_agent/events) into the same `SourceData`. Nothing downstream changes.
+2. **Reconcile** ([position.py](../../recon_agent/position.py)) groups everything by SKU into a `SkuPosition`. Demand is consolidated across *all* MIPS lines before inventory is applied. This fixes the root cause of scenario 1 (inventory applied to the first line only). Inventory applied is inferred as the demand the first active run was ordered against, less that run's order. On the event feed the projector keeps each MIPS line's quantity history and the source position at which each run's order was last set (`Projector.demand_at_order`, with the seed as the opening snapshot), so a demand change after the order moves the net requirement one for one and never reads as inventory. The extracts have no history, so there the demand is today's. Returns are the larger of the return transactions and the ticket's returned quantity, per ticket. `propose_allocation` applies inventory and then production across lines by priority: earliest sales date first, sales orders before supply plan. Any leftover becomes a carry-forward.
+3. **Detect**: [detectors.py](../../recon_agent/detectors.py) holds the SKU-level rules (R01, R02, R05–R11, R16) and the run/plant-level rules (R03/R04 ghost and blind runs, R12/R13 WMS report checks, R14 batches, R15 key hygiene). `anomaly.py` (removed in v3) added R17: a modified z-score on median/MAD (Iglewicz & Hoaglin), with the scale floored at the mean absolute deviation, applied to wrap overrun % and final piece variance.
+4. **Learn** ([feedback.py](../../recon_agent/feedback.py)): each rule has a Beta(1,1) prior over planner acceptance. Confidence is the posterior mean normalised so an unseen rule scores 1.0. A rejected finding whose units are unchanged is suppressed on the next run.
 5. **Rank**: `priority = (|units| × unit_price + base_priority) × severity_weight × confidence`, with weights High 3, Medium 2 and Low 1.
-6. **Attribute** ([accountability.py](../recon_agent/accountability.py)): each finding gets an accountability record built from the same values the rule used (see "System accountability" below). `compute_kpis` totals them as `by_origin` and `by_impact`.
-7. **Explain** ([ai.py](../recon_agent/ai.py)): see section 5.
+6. **Attribute** ([accountability.py](../../recon_agent/accountability.py)): each finding gets an accountability record built from the same values the rule used (see "System accountability" below). `compute_kpis` totals them as `by_origin` and `by_impact`.
+7. **Explain** ([ai.py](../../recon_agent/ai.py)): see section 5.
 
 Each `Finding` carries `rule`, `key`, `sku`, `units`, `unit_price`, `evidence` (a dict of source values), `recommendation` (rule text), `severity`, `confidence`, `systems`, `accountability` and `status`. Its ID is `{rule}-{key}`, which is stable across runs, so decisions survive reloads.
 
@@ -102,7 +102,7 @@ Where a rule's direction decides the blame, the record follows it. R09 is under-
 | Templating | Jinja2 | 3.1.6 | Server-rendered pages and fragments |
 | Front-end interactivity | htmx (vendored, `static/htmx.min.js`) | 2.0.4 | Partial page swaps and change polling with no JS build step |
 | Client script | Vanilla JS (`static/app.js`, ~100 lines) | — | Row selection, keyboard shortcuts (`/`, `j`, `k`, `Esc`), assistant panel |
-| Styling | Hand-written CSS (`static/app.css`), self-hosted Doto font | — | Design system in [DESIGN.md](../DESIGN.md) |
+| Styling | Hand-written CSS (`static/app.css`), self-hosted Doto font | — | Design system in [DESIGN.md](../../DESIGN.md) |
 | Form parsing | python-multipart | 0.0.32 | FastAPI `Form(...)` fields |
 | Config | python-dotenv | 1.2.4 | Loads `.env` |
 | AI | OCI Python SDK (`oci`) → OCI Generative AI, model `google.gemini-2.5-pro`, on-demand in `us-chicago-1` | oci 2.189 | The only AI provider used; API-key auth |
@@ -114,7 +114,7 @@ There is no database in Phase 1. State is held in process memory plus one JSON f
 
 ## 4. Web application
 
-[web/app.py](../recon_agent/web/app.py) holds the FastAPI app factory. [web/store.py](../recon_agent/web/store.py) holds the live worklist state.
+[web/app.py](../../recon_agent/web/app.py) holds the FastAPI app factory. [web/store.py](../../recon_agent/web/store.py) holds the live worklist state.
 
 ### Store
 
@@ -161,9 +161,9 @@ OpenAPI docs are served at `/api/docs` when `RECON_API_DOCS=on`.
 
 ### Identity
 
-People sign in with a username and password. Accounts live in `output/users.json` ([users.py](../recon_agent/users.py)): PBKDF2-SHA256 hashes (600,000 iterations), a display name, a role (`planner`, `supervisor`, `manager`) and a session counter. Manage them with `python -m recon_agent users list | seed | add | passwd | role | remove`. On first start, with no accounts file, the worklist creates the demo accounts and prints their passwords once (`RECON_DEMO_PASSWORD` sets one password for all of them).
+People sign in with a username and password. Accounts live in `output/users.json` ([users.py](../../recon_agent/users.py)): PBKDF2-SHA256 hashes (600,000 iterations), a display name, a role (`planner`, `supervisor`, `manager`) and a session counter. Manage them with `python -m recon_agent users list | seed | add | passwd | role | remove`. On first start, with no accounts file, the worklist creates the demo accounts and prints their passwords once (`RECON_DEMO_PASSWORD` sets one password for all of them).
 
-The session cookie (`recon_session`; the simulator's is `sim_session`) carries only the username and the session counter, signed with HMAC-SHA256 over `RECON_SECRET_KEY` and expiring after `RECON_SESSION_HOURS` ([security.py](../recon_agent/security.py)). `user_of()` reads the name and role from the account on every request, so a role change applies at once, and a password change (which bumps the counter) or a removed account ends the session. Request headers such as `X-Remote-User` are not trusted. Failed sign-ins are throttled: 5 per username and 50 per network address per 15 minutes.
+The session cookie (`recon_session`; the simulator's is `sim_session`) carries only the username and the session counter, signed with HMAC-SHA256 over `RECON_SECRET_KEY` and expiring after `RECON_SESSION_HOURS` ([security.py](../../recon_agent/security.py)). `user_of()` reads the name and role from the account on every request, so a role change applies at once, and a password change (which bumps the counter) or a removed account ends the session. Request headers such as `X-Remote-User` are not trusted. Failed sign-ins are throttled: 5 per username and 50 per network address per 15 minutes.
 
 Only write-back approval is restricted by role (planners and managers). Every signed-in person can claim, acknowledge, accept and reject.
 
@@ -171,7 +171,7 @@ Every response carries security headers (a Content-Security-Policy without `unsa
 
 ## 5. AI layer
 
-[ai.py](../recon_agent/ai.py) talks to OCI Generative AI through `GenerativeAiInferenceClient` with the generic chat API format.
+[ai.py](../../recon_agent/ai.py) talks to OCI Generative AI through `GenerativeAiInferenceClient` with the generic chat API format.
 
 - **`narrate_with_model()`**: one call per run with a strict JSON-schema response format. The prompt carries each finding's evidence and accountability record. It returns `shift_briefing`, `top_actions` and, per finding:
   - `explanation` (3–5 sentences: what happened, which system misfired and how, the knock-on effect, the correction) and `root_cause`;
@@ -195,7 +195,7 @@ The system prompt instructs the model to use only supplied or retrieved numbers 
 
 ## 6. Outputs
 
-`python -m recon_agent run` writes three files to `output/` ([report.py](../recon_agent/report.py)):
+`python -m recon_agent run` writes three files to `output/` ([report.py](../../recon_agent/report.py)):
 
 - `recon_<date>.xlsx`: the planner workbook. Its sheets are Briefing, Exceptions (with Decision/Note columns for offline review, and per flag the impact, where it started, the handoff, failure type and point, attribution basis, each system's role, and the AI's cause chain, confirming record, linked flags, figures check and audit ID), Accountability (flags, High flags, units and dollars by origin system), SKU Positions, Allocation Proposal, Rule Catalog and Data Lineage.
 - `recon_<date>.html`: a static dashboard, with where each of the top 30 flags started.
@@ -204,7 +204,7 @@ The system prompt instructs the model to use only supplied or retrieved numbers 
 
 ## 7. Configuration
 
-Thresholds and UI settings live in [config.py](../recon_agent/config.py). Environment variables (see [.env.example](../.env.example)):
+Thresholds and UI settings live in [config.py](../../recon_agent/config.py). Environment variables (see [.env.example](../../.env.example)):
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -330,7 +330,7 @@ This is from the architecture deck. None of it exists in this repo yet.
 ## 11. Known gaps
 
 - Tests cover the event feed, the eight scripted scenarios (which double as the rules' regression suite), integration faults and write-back (`tests/`), not the rules on real data. The validation run for 2026-09-12 (103 findings, $227,014 exposure with the current `feedback.json`) is still the regression baseline for the extracts.
-- The event feed is simulated. Its shape is an assumption until Bimbo IT confirms it ([EVENT_CONTRACT.md §6](EVENT_CONTRACT.md#6-assumptions-to-confirm-with-bimbo-it)). Sign-in uses local accounts (username and password), not OCI IAM.
+- The event feed is simulated. Its shape is an assumption until Bimbo IT confirms it ([EVENT_CONTRACT.md §6](../data-model/EVENT_CONTRACT.md#6-assumptions-to-confirm-with-bimbo-it)). Sign-in uses local accounts (username and password), not OCI IAM.
 - Claims, acknowledgments and the change log are in memory, so a restart clears them. Only one process can run.
 - Only write-back approval is restricted by role.
 - The returns/adjustments term of the net-requirement equation is 0 for the daily extracts; on the event feed it is the WMS return-to-plant quantity.

@@ -1,4 +1,4 @@
-5 systems (the business team's 9 Nov mapping, docs/DATA_MODEL_9NOV.md):
+5 systems (the business team's 9 Nov mapping, docs/data-model/DATA_MODEL.md):
 BUSS - Holds customer sales orders
 Oracle - Holds the item master and the planning forecast
 MIPS - Plans production: the demand left after allocated stock, and the work order for the shortfall

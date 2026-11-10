@@ -1,6 +1,6 @@
 """The 9 Nov data model: the demand-to-delivery equation and the edges of its rules.
 
-    Work Order Qty = (Sales Orders + Forecast) - Allocated - Available     (docs/DATA_MODEL_9NOV.md)
+    Work Order Qty = (Sales Orders + Forecast) - Allocated - Available     (docs/data-model/DATA_MODEL.md)
 
 Every edit to one source moves only its own term; stock that covers the demand needs no work
 order; an item with only a forecast is planning, not a mismatch; ODI rows served from stock

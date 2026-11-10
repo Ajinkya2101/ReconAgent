@@ -1,6 +1,6 @@
 # Inventory Reconciliation Agent: User and Business Guide
 
-> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL_9NOV.md](DATA_MODEL_9NOV.md) and [EVENT_CONTRACT.md](EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
+> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL.md](../data-model/DATA_MODEL.md) and [EVENT_CONTRACT.md](../data-model/EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
 
 | Item | Value |
 |---|---|
@@ -557,7 +557,7 @@ The change occurs immediately. All flags of the same rule move to their new posi
 
 | Document | Location |
 |---|---|
-| Technical overview | `docs/TECHNICAL_OVERVIEW.md` |
+| Technical overview | `docs/engineering/TECHNICAL_OVERVIEW.md` |
 | Requirement brief | `docs/reference/WMS_AI_Agent_Requirement.docx` |
 | Architecture presentation | `docs/reference/Bimbo Real-Time Inventory Reconciliation Agent.pptx` |
 | Challenges presentation | `docs/reference/Bimbo WMS Inventory Reconciliation PPT.pptx` |

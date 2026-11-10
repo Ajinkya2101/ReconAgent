@@ -47,7 +47,7 @@ Required on a server:
 | `RECON_SECRET_KEY` | A long random string: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Without it every restart signs everyone out. Changing it also signs everyone out. |
 | `RECON_SOURCE` | `excel` for the daily extracts; `events` for the simulation |
 
-Usually left at the default: `RECON_SESSION_HOURS` (12), `RECON_COOKIE_SECURE` (`on`), `RECON_API_DOCS` (`off`). The full list is in [.env.example](../.env.example) and [TECHNICAL_OVERVIEW.md §7](TECHNICAL_OVERVIEW.md#7-configuration).
+Usually left at the default: `RECON_SESSION_HOURS` (12), `RECON_COOKIE_SECURE` (`on`), `RECON_API_DOCS` (`off`). The full list is in [.env.example](../../.env.example) and [TECHNICAL_OVERVIEW.md §7](TECHNICAL_OVERVIEW.md#7-configuration).
 
 `.env` holds secrets (the OCI private key, the session key). Keep it out of git (`.gitignore` does), readable only by the deploying user (`chmod 600 .env`), and preferably fed from a secret store (OCI Vault) rather than kept on disk.
 
@@ -100,7 +100,7 @@ On Windows with `start_container.bat`: `start_container.bat users list`, `start_
 
 ## 6. Versions and releases
 
-The version is `__version__` in [recon_agent/__init__.py](../recon_agent/__init__.py), following [Semantic Versioning](https://semver.org/): MAJOR for changes that break a deployment (renamed variables, state file formats), MINOR for features, PATCH for fixes. Every change goes in [CHANGELOG.md](../CHANGELOG.md) under `[Unreleased]`.
+The version is `__version__` in [recon_agent/__init__.py](../../recon_agent/__init__.py), following [Semantic Versioning](https://semver.org/): MAJOR for changes that break a deployment (renamed variables, state file formats), MINOR for features, PATCH for fixes. Every change goes in [CHANGELOG.md](../../CHANGELOG.md) under `[Unreleased]`.
 
 To release:
 

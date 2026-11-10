@@ -2,7 +2,7 @@
 
 Each scenario plays a short story on SKU 76108, the workbook's own example, which starts
 clean: every scenario breaks one step of the demand-to-delivery flow
-(docs/DATA_MODEL_9NOV.md). Steps publish through the normal producer path, so injected
+(docs/data-model/DATA_MODEL.md). Steps publish through the normal producer path, so injected
 faults apply to them.
 
 Nothing here is a result. A change is relative to what the row holds when the step runs

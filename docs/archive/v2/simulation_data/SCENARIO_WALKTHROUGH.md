@@ -1,6 +1,6 @@
 # Scenario Walkthrough: Worked Examples and Calculations
 
-> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL_9NOV.md](../DATA_MODEL_9NOV.md) and [EVENT_CONTRACT.md](../EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
+> **Data model changed (v3, 9 Nov 2026).** The agent now uses the business team's mapping: BUSS orders, Oracle forecast, ODI batch mapping, WMS stock and MIPS work orders, with 13 rules. See [DATA_MODEL.md](../../../data-model/DATA_MODEL.md) and [EVENT_CONTRACT.md](../../../data-model/EVENT_CONTRACT.md). Where this guide describes MIPS order lines, ODI runs, tickets, rules R01-R19 or carry-forward, it describes v2 and is due for a rewrite.
 
 Every problem in the simulation's dummy data, worked through from the source rows to the flag. For each one, this document gives:
 
@@ -76,7 +76,7 @@ References in this document look like **`MIPS Order Lines` r6**, meaning sheet *
 
 ### 0.1 The quantities the engine builds per item
 
-[position.py](../../recon_agent/position.py) gathers each item's rows from every system into one *position* and computes:
+[position.py](../../../../recon_agent/position.py) gathers each item's rows from every system into one *position* and computes:
 
 | Quantity | Formula | From columns |
 |---|---|---|

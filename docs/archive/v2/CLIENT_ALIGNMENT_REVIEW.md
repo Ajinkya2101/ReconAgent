@@ -1,6 +1,6 @@
 # Client Alignment Review — Reconciliation Agent
 
-> **Superseded.** This review covers the v2 data model (the five client extracts). The agent now uses the business team's 9 Nov mapping: see [DATA_MODEL_9NOV.md](DATA_MODEL_9NOV.md).
+> **Superseded.** This review covers the v2 data model (the five client extracts). The agent now uses the business team's 9 Nov mapping: see [DATA_MODEL.md](../../data-model/DATA_MODEL.md).
 
 **Baseline.** Only what the client gave us:
 
@@ -151,7 +151,7 @@ Other assumptions to confirm at the same time:
 | REQ | Code | Status |
 |---|---|---|
 | **Step 1, collect:** MIPS, WMS, ODI/Oracle fields | Everything in the five extracts that the rules need | ⚠ 📄 see section 2 |
-| **Step 2, position:** *Net = Total valid demand − Available usable inventory − Completed production + Valid returns or adjustments*, "for each SKU, sales date, and production period"; consolidate all demand lines first | Same equation ([position.py:104-127](../recon_agent/position.py#L104-L127)); all lines consolidated | ✅ equation · ⚠ one position **per SKU** per load. Correct for a single-day extract like this one, but several sales days in one load would merge. Production period is not a dimension. "Valid" now excludes `Closed` lines ✅. |
+| **Step 2, position:** *Net = Total valid demand − Available usable inventory − Completed production + Valid returns or adjustments*, "for each SKU, sales date, and production period"; consolidate all demand lines first | Same equation ([position.py:104-127](../../../recon_agent/position.py#L104-L127)); all lines consolidated | ✅ equation · ⚠ one position **per SKU** per load. Correct for a single-day extract like this one, but several sales days in one load would merge. Production period is not a dimension. "Valid" now excludes `Closed` lines ✅. |
 | **Step 3, match:** runs, **work orders**, tickets, returns, shipment allocations, **freezer lots**, Oracle transactions, by SKU, dates, line, run, **work-order no.**, ticket, **lot**, qty, timestamp | Matches by SKU (and formula and line for runs) | ⚠ 📄 the identifiers are not in the extracts |
 | **Step 4, detect** | Section 5 | ⚠ |
 | **Step 5, recommend:** "an operational explanation rather than only reporting that numbers differ" | Every rule gives a correction with quantities; accountability names the system at fault; AI explanation is optional | ✅ (R02 wording: see 3 #2) |

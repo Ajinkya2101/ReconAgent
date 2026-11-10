@@ -1,6 +1,6 @@
 """Source adapters: read each system's rows into canonical records.
 
-The data model is the business team's 9 Nov mapping (docs/DATA_MODEL_9NOV.md): one
+The data model is the business team's 9 Nov mapping (docs/data-model/DATA_MODEL.md): one
 workbook, one sheet per source - Oracle item master and forecast, BUSS sales orders,
 the ODI batch data entry mapping, WMS stock and MIPS work orders. Every mapper
 normalises the join keys (item numbers, order numbers, dates), so the engine never

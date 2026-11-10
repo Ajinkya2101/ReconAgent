@@ -1,7 +1,7 @@
 """Starting dataset: one sales day at plant UBD, published as insert events.
 
 Built from the business team's 9 Nov mapping workbook, as revised on 10 Nov
-(docs/DATA_MODEL_9NOV.md):
+(docs/data-model/DATA_MODEL.md):
 
 - 76108 BP WHITE HOT DOG BUNS 8P 14Z is the workbook's own example, value for value:
   11 BUSS orders (14,339) at $4.69, forecast FC001 (41,769), 473 allocated and 7,000
@@ -11,7 +11,7 @@ Built from the business team's 9 Nov mapping workbook, as revised on 10 Nov
   (EXPECTED lists the flags). 76105 is priced like 76108 (same white-bun family, $4.69);
   950513 (butter) at $4.99.
 
-The workbook's own inconsistencies (docs/Data_Inconsistencies_9Nov.pdf: ODI ship dates a day
+The workbook's own inconsistencies (docs/data-model/Data_Inconsistencies_9Nov.pdf: ODI ship dates a day
 or two before BUSS's, wrapping before the work order dates, and so on) are kept as they are:
 the seed mirrors the source data, it does not correct it.
 
