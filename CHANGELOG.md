@@ -6,6 +6,12 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-10
+
+**Upgrading from 0.3.1:** the event contract is unchanged (v4), but the seed now carries 8 earlier sales days of
+history for the ML layer. Publish the seed again (`python -m recon_agent events seed --reset`), or the ML layer has no
+history and raises nothing.
+
 ### Added: the ML layer (R14-R17) and its scenarios (S11-S14)
 - **Anomaly detection against each item's own history** (`recon_agent/anomaly.py`), robust z-scores (median/MAD):
   R14 unusual order quantity for the customer, R15 forecast bias, R16 production anomaly (wrap duration), R17 inventory
@@ -18,6 +24,8 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
   line at half speed, stock vanishing overnight; each keeps the systems consistent, so only the ML flag fires.
 - ML flags carry accountability (origin likely, failure type Statistical anomaly) and are labelled "From the ML layer".
 - **Fixed:** corrections and the exported `v_sku_position` view read the current sales day only, not earlier days.
+- **System user guide** ([docs/guides/System_User_Guide.pdf](docs/guides/System_User_Guide.pdf)): every feature with
+  screenshots, all 14 scenarios, the ML layer, the command line, the API, and the full user test report.
 
 ## [0.3.1] - 2026-11-10
 
