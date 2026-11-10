@@ -4,9 +4,10 @@ Start with the data model: it is the reference for what the agent reads and chec
 
 | Document | For | Status |
 |---|---|---|
-| [data-model/DATA_MODEL.md](data-model/DATA_MODEL.md) | Everyone | **Current.** Data model v3: the 6 sources, the reconciled position, the 13 rules, the seed and the 10 scenarios |
+| [data-model/DATA_MODEL.md](data-model/DATA_MODEL.md) | Everyone | **Current.** Data model v3: the 6 sources, the reconciled position, the 13 rules, the ML layer (R14-R17), the seed and the 14 scenarios |
 | [data-model/EVENT_CONTRACT.md](data-model/EVENT_CONTRACT.md) | Engineers, Bimbo IT | **Current.** Event contract v4: entities, columns, the simulated feed and the assumptions to confirm |
 | [data-model/Data_Inconsistencies_9Nov.pdf](data-model/Data_Inconsistencies_9Nov.pdf) | Bimbo business team | **Current.** The workbook's own inconsistencies, with values, and how the seed differs from the workbook |
+| [guides/System_User_Guide.pdf](guides/System_User_Guide.pdf) | Everyone | **Current.** The whole application with screenshots: worklist, simulator, all 14 scenarios, the ML layer, command line, API, and the user test report |
 | [guides/USER_GUIDE.md](guides/USER_GUIDE.md) | Planners, supervisors, business readers | Partly v2: the worklist is described correctly, the rule list is not. Due for a rewrite |
 | [guides/SYSTEMS_GUIDE.md](guides/SYSTEMS_GUIDE.md) | Everyone using the live simulation | Partly v2: the two apps are described correctly, the dummy data is not. Due for a rewrite |
 | [engineering/TECHNICAL_OVERVIEW.md](engineering/TECHNICAL_OVERVIEW.md) | Engineers, IT | Partly v2: stack, web layer and security are current, the engine section is not. Due for a rewrite |
