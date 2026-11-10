@@ -131,13 +131,18 @@ The v2 R17 (outliers across 86 production runs of one day) was removed with v3; 
 on hand for components, then inbound for RM"). The item master lists the RM items, but the workbook
 has no bill of materials and no RM stock or inbound. The checks can be added once that data exists.
 
-## 5. Dummy data (seed): 3 SKUs, sales date Sat 12 Sep 2026, plant UBD
+## 5. Dummy data (seed): 6 SKUs, sales date Sat 12 Sep 2026, plant UBD
 
 | SKU | Item | Built from | Seeded state | Flags |
 |---|---|---|---|---|
 | 76108 | BP WHITE HOT DOG BUNS 8P 14Z | The workbook, value for value | Reconciles: the control | none |
 | 950513 | BP BUTTER HOT DOG BUNS 8P 15Z | Forecast FC002 (3,000) from the workbook; orders, stock, work order and price ($4.99) invented in the same shape | MIPS sized the work order to demand left and did not subtract WMS available stock. The plant also mixed one batch more than scheduled. | R05 (over-production 1,140), R11 |
 | 76105 | BP WHITE HAMBURGER BUNS 8P 15Z | Forecast FC004 (6,677) from the workbook; the rest invented, priced like 76108 ($4.69) | ODI holds a stale copy of one order. WMS on hand does not balance. One order's ship date is before the wrap. | R02, R10, R12 |
+| 950514 | BP BUTTER HAMBURGER BUNS 8P 16Z | Forecast FC005 (6,544) from the workbook; the rest invented ($4.99) | The BUSS -> ODI interface dropped Colonie's 1,250-unit order (MIPS planned it). | R01 (High, $6,238) |
+| 150080 | ST DUTCH COUNTRY 100 WW BREAD 4.49 24Z | Forecast FC007 (35,544) from the workbook; the rest invented ($4.49) | WMS has 1,000 allocated to orders; ODI records only Chicopee's 600. | R09 (400 units, $1,796) |
+| 77442 | GV WHITE SANDWICH BREAD 20Z | Forecast FC008 (34,578) from the workbook; the rest invented ($2.98) | MIPS re-planned the work order to 37,628; ODI still carries 35,000. | R07 (2,628 units, $7,831) |
+
+On the starting day the worklist shows **5 SKUs** (76108 reconciles) with **8 open flags** and **$32,810** at risk.
 
 The other seven FG items and the nine RM items in the item master are loaded as master data only.
 
@@ -145,7 +150,7 @@ The other seven FG items and the nine RM items in the item master are loaded as 
 each customer's orders, the forecast, a completed work order and its ODI wrap row, varying from week to week by a fixed
 pattern whose median is today's value (orders about ±8%, forecasts ±4%, wrap time ±2.5%; BBU_LANCASTER NY CMB orders swing
 from 90 to 1,000). WMS stock gets one count a day for the 8 days before the sales day. Today's values sit in the middle of
-their history (|z| below 0.6), so the seed raises no ML flags. The seed publishes 314 events.
+their history (|z| below 0.6), so the seed raises no ML flags. The seed publishes 508 events.
 
 ## 6. Scenarios (simulator), all on the clean SKU 76108 (fourteen)
 

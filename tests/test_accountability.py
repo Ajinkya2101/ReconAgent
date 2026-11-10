@@ -177,9 +177,9 @@ class FigureCheckTest(unittest.TestCase):
         self.assertTrue(chk["chain_starts_at_origin"])
 
     def test_an_invented_figure_is_reported(self):
-        e = self.entry(explanation="The work order makes 1,350 too many.")
+        e = self.entry(explanation="The work order makes 1,357 too many.")
         self.assertEqual(ai.check_entry(e, self.f, self.payloads, self.res.kpis)["check"]["unverified_figures"],
-                         ["1,350"])
+                         ["1,357"])
 
     def test_codes_dates_and_small_counts_are_not_figures(self):
         checked, unknown = ai.check_figures(

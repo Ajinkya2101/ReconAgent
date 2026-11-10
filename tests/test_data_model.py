@@ -101,14 +101,14 @@ class EquationTest(unittest.TestCase):
 
     def test_an_item_with_only_a_forecast_is_planning_until_it_has_orders(self):
         res = result(self.log)
-        self.assertNotIn("950514", res.positions)              # FC005 alone
+        self.assertNotIn("950996", res.positions)              # FC006 alone
         self.log.publish(Change("buss.sales_order", "I", row={
-            "SO Line ID": "2263300-1", "Order Number": "2263300", "Order Line": 1, "Item Number": "950514",
+            "SO Line ID": "2263300-1", "Order Number": "2263300", "Order Line": 1, "Item Number": "950996",
             "Order Quantity": 300, "Sales Date": "2026-09-12"}), "test", NOW)
         res = result(self.log)
-        self.assertEqual(res.positions["950514"].demand, 300 + 6544)
-        self.assertEqual({f.id for f in res.findings if f.sku == "950514"},
-                         {"R01-2263300-1", "R01-FC005", "R06-950514"})
+        self.assertEqual(res.positions["950996"].demand, 300 + 33445)
+        self.assertEqual({f.id for f in res.findings if f.sku == "950996"},
+                         {"R01-2263300-1", "R01-FC006", "R06-950996"})
 
 
 class ProposalTest(unittest.TestCase):

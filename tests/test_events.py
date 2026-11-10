@@ -226,7 +226,8 @@ class SeedTest(unittest.TestCase):
         self.assertEqual({f.id for f in res.findings}, set(seed.EXPECTED))
         self.assertEqual(res.kpis["sales_date"], seed.DEFAULT_SALES_DATE.isoformat())
         self.assertTrue(set(seed.CLEAN_SKUS).isdisjoint({f.sku for f in res.findings}))
-        self.assertEqual(sorted(res.positions), ["76105", "76108", "950513"])   # forecast-only items: no position
+        self.assertEqual(sorted(res.positions), sorted(seed.SKUS))   # forecast-only items: no position
+        self.assertEqual(len({f.sku for f in res.findings}), 5)        # five SKUs to work on; 76108 reconciles
         self.assertEqual(SimClock(log).state().anchor_sim, seed.start_time(seed.DEFAULT_SALES_DATE))
 
     def test_the_control_sku_is_the_workbook_example(self):
@@ -241,7 +242,8 @@ class SeedTest(unittest.TestCase):
         res = run(seeded_log())
         # 76108 at the workbook's $4.69; 76105 priced like it, 950513 (butter) at $4.99.
         self.assertEqual({k: p.unit_price for k, p in res.positions.items()},
-                         {"76108": 4.69, "950513": 4.99, "76105": 4.69})
+                         {"76108": 4.69, "950513": 4.99, "76105": 4.69, "950514": 4.99, "150080": 4.49,
+                          "77442": 2.98})
         self.assertEqual(res.findings[0].unit_price if res.findings else None,
                          res.positions[res.findings[0].sku].unit_price)
         # A line served from allocated stock has no work order and no batch counts (as in the workbook).
@@ -313,7 +315,8 @@ class WorkbookFeedTest(unittest.TestCase):
         self.assertEqual(feed.position(), 0.0)
         write_workbook(seeded_log(), data / "new_dummy_data" / "BIMBO_MIPS_WMS_ODI_Data_TEST.xlsx")
         self.assertGreater(feed.position(), 0.0)
-        self.assertEqual(len(ingest.split_current(feed.load()).sales_orders), 18)   # the rest is history
+        today = sum(len(c["orders"]) for c in seed.SKUS.values())
+        self.assertEqual(len(ingest.split_current(feed.load()).sales_orders), today)   # the rest is history
 
     def test_the_price_column_before_10_nov_is_still_read(self):
         old, new = ({"Order Number": 1, k: 3.5} for k in ("Price", "Price in $"))

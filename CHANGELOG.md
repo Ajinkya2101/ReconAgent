@@ -6,6 +6,20 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-10
+
+**Upgrading from 0.4.0:** publish the seed again (`python -m recon_agent events seed --reset`) to get the new starting day.
+
+### Changed: a richer starting day (five SKUs to work on)
+- Three more seeded SKUs, each with one discrepancy the starting day did not show yet: 950514 (an order the BUSS -> ODI
+  interface dropped, R01), 150080 (WMS holds more allocated stock than ODI records, R09) and 77442 (ODI keeps the old
+  work-order quantity after MIPS re-planned, R07). Their forecasts are the workbook's (FC005, FC007, FC008); each
+  carries eight weeks of history, so the ML layer stays quiet on them.
+- The worklist now opens with 5 SKUs, 8 open flags and $32,810 at risk (was 2 SKUs, 5 flags, $16,945); 76108 still
+  reconciles as the control. The seed publishes 508 events.
+- The seed supports two more discrepancies by configuration: an order left out of ODI (`odi_missing`) and an ODI
+  work-order quantity that differs from MIPS (`odi_wo_qty`).
+
 ## [0.4.0] - 2026-11-10
 
 **Upgrading from 0.3.1:** the event contract is unchanged (v4), but the seed now carries 8 earlier sales days of

@@ -88,6 +88,14 @@ class ChangeReachesScreensTest(unittest.TestCase):
         for k in ("ODI-0013", "ODI-0014", "ODI-0015", "ODI-0016"):
             log.publish(Change("odi.batch_mapping", "U", k, {"Act Batches Mixed": 4, "Work Order Quantity": 3700}),
                         "test", NOW)
+        # The three later SKUs: map 950514's lost order, align 150080's allocation, refresh 77442's work order.
+        log.publish(Change("odi.batch_mapping", "I", row={
+            "ODI Entry ID": "ODI-0099", "Source System": "BUSS", "Sales Order Number / Forcast": "2263271",
+            "SO Line number": 1, "Quantity": 1250, "Work Order Number": "WO-UBD-20260912-004",
+            "Work Order Quantity": 8694, "Item Number": "950514", "Product Sales Date": "2026-09-12"}), "test", NOW)
+        log.publish(Change("odi.batch_mapping", "U", "ODI-0027", {"Allocated quantity for SO": 1000}), "test", NOW)
+        for k in ("ODI-0029", "ODI-0030", "ODI-0031", "ODI-0032"):
+            log.publish(Change("odi.batch_mapping", "U", k, {"Work Order Quantity": 37628}), "test", NOW)
         store = Store(sources.EventFeed(log.path))
         self.assertEqual(store.rows, {})
         version = store.version

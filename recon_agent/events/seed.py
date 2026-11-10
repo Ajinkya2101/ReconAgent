@@ -10,6 +10,10 @@ Built from the business team's 9 Nov mapping workbook, as revised on 10 Nov
   stock, work orders and prices are invented in the same shape, each with known mismatches
   (EXPECTED lists the flags). 76105 is priced like 76108 (same white-bun family, $4.69);
   950513 (butter) at $4.99.
+- 950514, 150080 and 77442 take their forecast (FC005, FC007, FC008) from the workbook and
+  carry one discrepancy each: an order the BUSS -> ODI interface dropped (R01), WMS holding
+  more allocated stock than ODI records (R09), and ODI keeping an old work-order quantity
+  after MIPS re-planned (R07). With 950513 and 76105 the worklist opens with five SKUs.
 
 The workbook's own inconsistencies (docs/data-model/Data_Inconsistencies_9Nov.pdf: ODI ship dates a day
 or two before BUSS's, wrapping before the work order dates, and so on) are kept as they are:
@@ -156,6 +160,43 @@ SKUS = {
         ],
         "stock": (1900, 1500, 300, "FG.2.1.1"), "mips": (10497, 8997),
     },
+    # Three more SKUs, each with one discrepancy the starting day did not yet show. Their forecasts
+    # (FC005, FC007, FC008) are the workbook's; orders, stock, work orders and prices are invented.
+    "950514": {   # the BUSS -> ODI interface dropped the Colonie order (R01): a missing transaction
+        "buss": "2791", "forecast": "FC005", "wo": 4, "price": 4.99, "line": "Line 2", "shift": "Shift A",
+        "oracle_type": "SU392952", "formula": "PH202841A", "mips_desc": "Ball Park Butter Hamburger Buns",
+        "wrap": ((3, 8, 0), (3, 12, 30)), "batches": (4, 4), "forecast_ship": 2,
+        "orders": [
+            ("2263270", "ALBANY NY (PROSPECT RD) BAKERY", 1800, 1, 0, None),
+            ("2263271", "COLONIE NY DISTRIBUTION CENTER", 1250, 2, 0, None),
+            ("2263272", "WILMINGTON MA DISTRIBUTION CENTER", 420, 2, 420, None),
+        ],
+        "odi_missing": ("2263271",),
+        "stock": (1320, 900, 420, "FG.2.2.1"), "mips": (9594, 8694),
+    },
+    "150080": {   # WMS reserved 1,000 but ODI records only the 600 on Chicopee's order (R09)
+        "buss": "2810", "forecast": "FC007", "wo": 5, "price": 4.49, "line": "Line 3", "shift": "Shift A",
+        "oracle_type": "SU393010", "formula": "PH203100A", "mips_desc": "Stroehmann Dutch Country 100% WW",
+        "wrap": ((3, 2, 0), (3, 7, 40)), "batches": (12, 12), "forecast_ship": 2,
+        "orders": [
+            ("2263273", "CANASTOTA NY DISTRIBUTION CENTER", 2600, 1, 0, None),
+            ("2263274", "CHICOPEE MA DISTRIBUTION CENTER", 600, 2, 600, None),
+            ("2263275", "MILLBURY MA (LATTI FARM RD) DISTRIBUTION CENTER", 1100, 2, 0, None),
+        ],
+        "stock": (3000, 2000, 1000, "FG.3.1.1"), "mips": (38844, 36844),
+    },
+    "77442": {   # MIPS re-planned the work order to 37,628; ODI still carries 35,000 (R07)
+        "buss": "2820", "forecast": "FC008", "wo": 6, "price": 2.98, "line": "Line 3", "shift": "Shift C",
+        "oracle_type": "SU393020", "formula": "PH203110A", "mips_desc": "Great Value White Sandwich",
+        "wrap": ((2, 1, 0), (2, 6, 30)), "batches": (10, 10), "forecast_ship": 1,
+        "orders": [
+            ("2263276", "BBU_BAY SHORE NY ST", 3200, 1, 0, None),
+            ("2263277", "BBU_MASPETH NY PAGE", 1450, 1, 0, None),
+            ("2263278", "ALBANY NY (PROSPECT RD) BAKERY", 2100, 1, 0, None),
+        ],
+        "odi_wo_qty": 35000,
+        "stock": (3700, 3700, 0, "FG.3.2.1"), "mips": (41328, 37628),
+    },
 }
 
 # Flags the seed must raise (flag IDs, as the engine builds them). The seed test checks these.
@@ -165,6 +206,9 @@ EXPECTED = {
     "R02-2263255-1": "BUSS has the Colonie order at 900; ODI still maps 800",
     "R10-INV-0003": "WMS on hand 1,900 but available 1,500 + allocated 300 = 1,800",
     f"R12-{wo_number(DEFAULT_SALES_DATE, 3)}": "wrapping ended after the Albany order's requested ship date",
+    "R01-2263271-1": "BUSS has Colonie's 950514 order for 1,250; the ODI mapping has no row for it",
+    "R09-150080": "WMS has 1,000 allocated to orders; ODI records 600",
+    f"R07-{wo_number(DEFAULT_SALES_DATE, 6)}": "MIPS work order is 37,628; ODI still carries 35,000",
 }
 CLEAN_SKUS = ("76108",)
 
@@ -231,7 +275,8 @@ def build(sales_date: dt.date = DEFAULT_SALES_DATE) -> list[Change]:
                 "Sales Order Number / Forcast": ref, "SO Line number": line, "Quantity": qty,
                 "Allocated quantity for SO": allocated or None,
                 "Work Order Number": wo if on_wo else None, "Work Order Date": S if on_wo else None,
-                "Work Order Quantity": wo_qty if on_wo else None, "Item Number": sku if on_wo else None,
+                "Work Order Quantity": c.get("odi_wo_qty", wo_qty) if on_wo else None,
+                "Item Number": sku if on_wo else None,
                 "Wrapping Start Date Time": wrap_start if on_wo else None,
                 "Wrapping End Date Time": wrap_end if on_wo else None,
                 "Plant Name": PLANT_NAME if on_wo else None, "Prod Line": c["line"] if on_wo else None,
@@ -243,6 +288,8 @@ def build(sales_date: dt.date = DEFAULT_SALES_DATE) -> list[Change]:
 
         odi("OCloud Region2", c["forecast"], None, FORECASTS[c["forecast"]][1], c["forecast_ship"], 0)
         for order, _, qty, ship_days, allocated, odi_qty in c["orders"]:
+            if order in c.get("odi_missing", ()):
+                continue   # the BUSS -> ODI interface dropped it (R01)
             odi("BUSS", order, 1, qty if odi_qty is None else odi_qty, ship_days, allocated)
 
         # --- WMS stock: a daily count for HISTORY_DAYS days, then today's ---------------

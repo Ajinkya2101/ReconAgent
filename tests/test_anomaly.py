@@ -58,7 +58,8 @@ class HistoryTest(unittest.TestCase):
         self.assertEqual(ml_flags(res), {})                     # today sits inside its history
         h = res.src.history
         self.assertEqual((len(h.sales_orders), len(h.forecasts), len(h.work_orders), len(h.odi)),
-                         (18 * seed.HISTORY_DAYS, 3 * seed.HISTORY_DAYS, 3 * seed.HISTORY_DAYS, 3 * seed.HISTORY_DAYS))
+                         (sum(len(c["orders"]) for c in seed.SKUS.values()) * seed.HISTORY_DAYS,
+                          *[len(seed.SKUS) * seed.HISTORY_DAYS] * 3))
         p = res.positions["76108"]
         self.assertEqual((p.so_qty, p.forecast_qty, p.wo_qty, len(p.odi)), (14339, 41769, 48635, 12))
         self.assertEqual(res.kpis["sales_date"], "2026-09-12")
