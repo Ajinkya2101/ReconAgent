@@ -129,7 +129,11 @@ h1, h2, h3, h4, p { margin: 0; }
 .strip-mark { font-weight: 700; font-size: var(--t-lg); text-decoration: none; letter-spacing: -0.01em; white-space: nowrap; }
 .strip-asof { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; font-size: var(--t-sm); color: var(--ink-2); white-space: nowrap; overflow: hidden; }
 .asof-mode { font-weight: 650; color: var(--ink); padding-right: 12px; border-right: 1px solid var(--rule-2); }
-.asof-detail { display: inline-flex; align-items: center; gap: 6px; }
+.asof-detail { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+/* When the strip is tight (the "rows changed" pill is showing), "event #N · as of" gives way first:
+   the tag and the time always stay whole. */
+.asof-mode, .asof-detail > :not(.asof-wide) { flex: none; }
+.asof-detail > .asof-wide { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .asof-short { display: none; }
 .sim-short, .reset-short { display: none; }
 .sim-badge { display: inline-block; margin-right: 8px; padding: 1px 6px; border: 1px solid var(--ink); border-radius: var(--radius); font-family: var(--mono); font-size: var(--t-xs); font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); }
@@ -548,7 +552,7 @@ h1, h2, h3, h4, p { margin: 0; }
   .rows.has-tags.has-open .row:not(.is-current) .row-link { grid-template-columns: 104px minmax(0, 1fr) auto; grid-template-areas: "tag id money" "tag second chips"; }
   .rows.has-open .row:not(.is-current) :is(.row-title, .row-units, .row-more, .row-state) { display: inline; }
   .rows.has-open .row:not(.is-current) .row-money { font-size: var(--t-2xl); }
-  .asof-wide { display: none; }   /* the tag and the time stay */
+  .asof-wide, .pill-wide { display: none; }   /* the tag and the time stay; the pill says "N rows changed · Update" */
   .keys-btn { display: none; }
   /* The account and assistant go to icons so the freshness line keeps its room. */
   .strip { gap: 14px; }

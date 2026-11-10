@@ -6,6 +6,13 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+### Changed: source changes wait for Update again
+- 0.3.0 redrew the worklist by itself whenever the source data changed. The top bar again shows
+  "N rows changed by others · Update" (or "AI explanations ready · Update", "Figures changed · Update"),
+  and nothing on screen moves until Update is clicked; the as-of time says when the screen last checked. Update redraws
+  the queue, the day totals, the briefing and the open detail from the current run, as the automatic
+  redraw did; an unsent note still holds the detail back. A person's own actions never show the pill.
+
 ## [0.3.0] - 2026-11-10
 
 The business team's 9 Nov data model (v3) replaces the five-extract model (v2), and `main` now holds it

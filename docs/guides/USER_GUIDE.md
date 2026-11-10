@@ -280,7 +280,7 @@ Each row shows:
 
 The top strip shows "Daily extracts, not live". It also shows the sales day and the time that the agent loaded the data.
 
-Each 20 seconds, the screen asks the agent for changes. The strip then shows the time of the last check. If other persons changed rows, the strip shows a button: "N rows changed by others · Update". If the AI explanations become available, the strip shows "AI explanations ready · Reload".
+Each 20 seconds, the screen asks the agent for changes. The strip then shows the time of the last check. If other persons changed rows, the strip shows a button: "N rows changed by others · Update". If the AI explanations become available, the strip shows "AI explanations ready · Update". Nothing on the screen moves until you click Update.
 
 CAUTION: If you see a "changed by others" button, push it before you make a decision. If you do not, you can make a decision on old data.
 

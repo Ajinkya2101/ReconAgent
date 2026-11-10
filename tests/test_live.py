@@ -192,13 +192,17 @@ class LiveRedrawTest(unittest.TestCase):
         self.log.publish(Change(entity, "U", key, cols), "simulator:test", NOW)
         self.store.refresh_if_sources_changed()
 
-    def test_a_feed_change_redraws_itself(self):
+    def test_a_feed_change_waits_for_update(self):
         version = self.store.version
         self.publish("odi.batch_mapping", "ODI-0013", {"Act Batches Mixed": 6})
         changes = self.client.get(f"/changes?since={version}", headers=self.hx).text
-        self.assertIn("data-live-refresh", changes)          # applied by itself, no "Update" pill
-        self.assertNotIn("changes-pill", changes)
+        # The top bar says what changed; nothing on screen moves until Update is clicked.
+        self.assertIn('class="changes-pill" data-update>1 row changed<span class="pill-wide">&nbsp;by others</span>'
+                      '&nbsp;· Update', changes)
+        self.assertNotIn("data-live-refresh", changes)
+        # Update redraws the queue, the day totals, the briefing and the open detail, and clears the pill.
         r = self.client.get(f"/queue?since={version}&live=1&open=950513", headers=self.hx).text
+        self.assertNotIn("changes-pill", r)
         self.assertIn('id="detail" hx-swap-oob="innerHTML"', r)
         self.assertIn("ODI-0013: 6 of 4", r)
         self.assertIn('id="days" hx-swap-oob="outerHTML"', r)
@@ -220,6 +224,7 @@ class LiveRedrawTest(unittest.TestCase):
     def test_ai_text_redraws_the_open_detail(self):
         version = self.store.version
         self.store._bump(AI_READY, "ai")
+        self.assertIn("AI explanations ready&nbsp;· Update", self.client.get(f"/changes?since={version}", headers=self.hx).text)
         r = self.client.get(f"/queue?since={version}&live=1&open=950513", headers=self.hx).text
         self.assertIn('id="detail" hx-swap-oob="innerHTML"', r)
 

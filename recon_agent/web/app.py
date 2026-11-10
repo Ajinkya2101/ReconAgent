@@ -239,8 +239,8 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.get("/queue", response_class=HTMLResponse)
     def queue(request: Request, open: str = "", since: int = -1, live: int = 0):
-        """The queue. With live=1 (a change in the data reached this screen) it also redraws the day
-        totals, the briefing and the open detail from the current run, so no figure stays stale."""
+        """The queue. With live=1 (the reader clicked Update on the "rows changed" pill) it also redraws
+        the day totals, the briefing and the open detail from the current run, so no figure stays stale."""
         user = require_user(request)
         if not is_htmx(request):
             return RedirectResponse("/?" + str(request.query_params), status_code=303)
@@ -268,7 +268,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         """Server push: a `changed` event whenever the store's version passes `since`.
 
         The event carries no data; the page fetches /changes, which filters out the
-        viewer's own changes and renders the "rows changed" pill as before.
+        viewer's own changes and renders the "rows changed · Update" pill.
         """
         require_user(request)
 

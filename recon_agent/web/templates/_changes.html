@@ -1,11 +1,14 @@
 <span id="changes" class="changes" hx-get="/changes?since={{ since }}" hx-trigger="every {{ config.WEB_POLL_SECONDS }}s, recon:changed from:body" hx-swap="outerHTML"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>
   {%- set sim_reset = "__reset__" in keys %}
+  {%- set row_keys = keys|reject("equalto", "__ai__")|reject("equalto", "__reset__")|reject("equalto", "__data__")|list %}
   {%- if sim_reset %}
-  <a class="changes-pill" href="/">Simulation reset<span class="pill-wide"> to the starting day</span> · Reload</a>
+  <a class="changes-pill" href="/">Simulation reset<span class="pill-wide">&nbsp;to the starting day</span>&nbsp;· Reload</a>
+  {%- elif row_keys %}
+  {#- Changes from the source systems and other people wait for the reader: nothing on screen moves until
+      Update, which redraws the queue, the day totals, the briefing and the open detail (app.js). -#}
+  <button type="button" class="changes-pill" data-update>{{ row_keys|length }} {{ "row" if row_keys|length == 1 else "rows" }} changed<span class="pill-wide">&nbsp;by others</span>&nbsp;· Update</button>
   {%- elif keys %}
-  {#- Source data, AI text and other people's actions apply at once: app.js sees this marker and redraws
-      the queue, the day totals, the briefing and the open detail from this run (keeping an unsent note). -#}
-  <span hidden data-live-refresh></span>
+  <button type="button" class="changes-pill" data-update>{{ "AI explanations ready" if "__ai__" in keys else "Figures changed" }}&nbsp;· Update</button>
   {%- endif %}
 </span>
 {%- if asof_oob %}{% include "_asof.html" %}{% endif %}

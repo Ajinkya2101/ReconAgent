@@ -152,10 +152,11 @@
     else if (e.key === "r" && detailOpen) { if (goTo($("[data-reject]", currentFlag() || document.createElement("i")))) e.preventDefault(); }
   });
 
-  // Live data: when /changes reports a change (pushed or polled), one debounced request redraws the queue,
-  // the day totals, the briefing and the open detail from the current run. Never at the cost of what
-  // someone is doing: while a note is being written the detail waits and is redrawn once the note is
-  // sent, cleared or left; an expanded briefing stays open; open disclosures and the scroll survive.
+  // Changes wait for the reader: /changes (pushed or polled) shows "N rows changed by others · Update" in
+  // the top bar, and nothing on screen moves until it is clicked. Update then redraws the queue, the day
+  // totals, the briefing and the open detail from the current run. Never at the cost of what someone is
+  // doing: while a note is being written the detail waits and is redrawn once the note is sent, cleared
+  // or left; an expanded briefing stays open; open disclosures and the scroll survive.
   let liveTimer = null, kept = null, staleDetail = null;
   const detailBusy = (d) => (d.contains(document.activeElement) && document.activeElement.matches("input, textarea, select"))
     || $$("textarea", d).some((t) => t.value.trim());
@@ -168,7 +169,7 @@
       htmx.ajax("GET", "/queue", { source: filters, target: "#queue", values: { since, live: 1 } });
     }, 150);
   }
-  document.body.addEventListener("htmx:afterSettle", () => { if ($("#changes [data-live-refresh]")) liveRefresh(); });
+  document.addEventListener("click", (e) => { if (e.target.closest("#changes [data-update]")) liveRefresh(); });
   // After a decision the server sends every row's new rank: renumber the rows on screen, so no two
   // rows show the same place while the queue waits for its next redraw.
   document.body.addEventListener("htmx:oobAfterSwap", (e) => {
