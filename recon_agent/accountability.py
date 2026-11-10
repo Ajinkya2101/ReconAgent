@@ -43,6 +43,15 @@ def _n(x) -> str:
         return str(x)
 
 
+def _units(x, noun: str = "unit") -> str:
+    """'1 unit', '2,400 units': the count with its noun in the right number."""
+    try:
+        n = float(x)
+    except (TypeError, ValueError):
+        return f"{x} {noun}s"
+    return f"{n:,.0f} {noun}" + ("" if round(abs(n)) == 1 else "s")
+
+
 def _same(a: float, b: float) -> bool:
     return abs(a - b) < 0.5
 
@@ -63,10 +72,10 @@ def _r01(f, p, ev):
     return _record(
         f, "Under-production", "Integration", "Missing transaction",
         f"The {src} → ODI interface did not deliver {ev['demand_line']}.", "certain",
-        {src: ("Reference", f"Holds {ev['demand_line']}: {_n(ev['source_qty'])} units."),
+        {src: ("Reference", f"Holds {ev['demand_line']}: {_units(ev['source_qty'])}."),
          "ODI": ("Affected", f"Has no mapping row for it; ODI maps {_n(ev['odi_demand'])} of "
                              f"{_n(ev['total_demand'])} demand."),
-         "MIPS": ("Affected", f"Plans without these {_n(f.units)} units, so the work order is short by them.")},
+         "MIPS": ("Affected", f"Plans without these {_units(f.units)}, so the work order is short by them.")},
         handoff=f"{src} → ODI")
 
 
@@ -82,7 +91,7 @@ def _r02(f, p, ev):
     return _record(
         f, impact, "Integration", "Stale data",
         f"The {ev['demand_line']} changed in {src} and the change never reached ODI.", "certain",
-        {src: ("Reference", f"Holds {_n(ev['source_qty'])} units for {ev['demand_line']}."),
+        {src: ("Reference", f"Holds {_units(ev['source_qty'])} for {ev['demand_line']}."),
          "ODI": ("Affected", f"Still maps {_n(ev['odi_qty'])} on row {ev['odi_entry']}."), "MIPS": mips},
         handoff=f"{src} → ODI")
 
@@ -93,8 +102,8 @@ def _r03(f, p, ev):
         f, "Over-production", "Integration", "Missing delete",
         f"The {ev['demand_line']} was removed in {src}, but the ODI mapping kept it.", "certain",
         {src: ("Reference", f"No longer has {ev['demand_line']}."),
-         "ODI": ("Affected", f"Still maps it on row {ev['odi_entry']}: {_n(ev['odi_qty'])} units."),
-         "MIPS": ("To check", f"Plans these {_n(ev['odi_qty'])} units if it follows ODI.")}, handoff=f"{src} → ODI")
+         "ODI": ("Affected", f"Still maps it on row {ev['odi_entry']}: {_units(ev['odi_qty'])}."),
+         "MIPS": ("To check", f"Plans these {_units(ev['odi_qty'])} if it follows ODI.")}, handoff=f"{src} → ODI")
 
 
 # --- 3-5. MIPS demand and the work order ------------------------------------------
@@ -201,7 +210,7 @@ def _r08(f, p, ev):
     return _record(
         f, "Short shipment", "ODI", "Missing link",
         f"ODI mapped the {ev['demand_line']} to no work order, and it has no allocated stock.", "likely",
-        {"ODI": ("Misfired", f"Row {ev['odi_entry']}: {_n(ev['odi_qty'])} units, {_n(ev['allocated'])} allocated, "
+        {"ODI": ("Misfired", f"Row {ev['odi_entry']}: {_units(ev['odi_qty'])}, {_n(ev['allocated'])} allocated, "
                              f"no work order."),
          "MIPS": ("To check", f"Work orders: {ev['mips_work_orders'] or 'none'}."),
          "WMS": ("To check", "Stock could be allocated to the order instead.")})
@@ -246,7 +255,7 @@ def _r12(f, p, ev):
         f"Wrapping for work order {ev['work_order']} ended after the requested ship date.", "likely",
         {"ODI": ("Misfired", f"Wrapping ended {ev['wrapping_end']}; earliest ship date {ev['earliest_ship_date']}."),
          "MIPS": ("To check", "Check whether the work order was scheduled too late."),
-         "WMS": ("Affected", f"Cannot ship {_n(f.units)} units of {_n(ev['late_orders'])} orders on time.")})
+         "WMS": ("Affected", f"Cannot ship {_units(f.units)} of {_n(ev['late_orders'])} orders on time.")})
 
 
 def _r13(f, p, ev):

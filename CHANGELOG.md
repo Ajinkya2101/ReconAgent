@@ -6,6 +6,10 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+### Fixed: counts read "1 unit", never "1 units"
+- Recommendations, accountability records and write-back proposals put the noun in the right number
+  (`detectors._units`).
+
 ### Changed: the 10 Nov revision of the business workbook (event contract v4)
 - **Price.** The BUSS column `Price` is now `Price in $` and carries $4.69 on every 76108 line. The contract
   renames the column, so the dollar ranking uses real prices instead of the $3.99 default. The reader still

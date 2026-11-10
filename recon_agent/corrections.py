@@ -23,7 +23,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from . import config, security
-from .detectors import Finding
+from .detectors import Finding, _units
 from .events import contract
 from .ingest import norm_sku
 
@@ -94,7 +94,7 @@ def propose(f: Finding, tables: dict[str, dict[str, dict]], now: dt.datetime) ->
                "Sales Order Number / Forcast": src["Order Number"] if is_so else src["Forecast ID"],
                "SO Line number": src["Order Line"] if is_so else None, "Quantity": _j(ev["source_qty"])}
         return Proposal(f.id, f.rule, "ODI", "odi.batch_mapping", "I", key, {}, row,
-                        f"Map {ev['source_qty']:,.0f} units in ODI as {key}, on work order "
+                        f"Map {_units(ev['source_qty'])} in ODI as {key}, on work order "
                         f"{template['Work Order Number']}, for {ev['demand_line']}.")
     if f.rule == "R02":   # ODI's copy follows the source
         r = tables["odi.batch_mapping"].get(ev["odi_entry"])
@@ -109,7 +109,7 @@ def propose(f: Finding, tables: dict[str, dict[str, dict]], now: dt.datetime) ->
         if not r:
             return None
         return Proposal(f.id, f.rule, "ODI", "odi.batch_mapping", "D", f.key, {"Quantity": _j(r["Quantity"])}, {},
-                        f"Remove ODI row {f.key} ({r['Quantity']:,.0f} units): {ev['source_system']} no longer has "
+                        f"Remove ODI row {f.key} ({_units(r['Quantity'])}): {ev['source_system']} no longer has "
                         f"{ev['demand_line']}.")
     if f.rule in ("R04", "R05"):   # MIPS follows the sources: demand left, or the shortfall
         wos = _work_orders(tables, f.sku)
@@ -142,7 +142,7 @@ def propose(f: Finding, tables: dict[str, dict[str, dict]], now: dt.datetime) ->
                "Work Order Quantity": _j(ev["shortfall"]), "Work order start date": _j(sales),
                "Work Order Completion Date": _j(sales), "Work Order Status": "Released"}
         return Proposal(f.id, f.rule, "MIPS", "mips.work_order", "I", wo, {}, row,
-                        f"Create MIPS work order {wo} for {ev['shortfall']:,.0f} units of {f.sku}.")
+                        f"Create MIPS work order {wo} for {_units(ev['shortfall'])} of {f.sku}.")
     if f.rule == "R07" and "work_order" in ev:   # every ODI row of the work order takes the MIPS quantity
         w = tables["mips.work_order"].get(f.key)
         rows = [r for r in tables["odi.batch_mapping"].values()

@@ -89,6 +89,15 @@ def _fmt(x: float) -> str:
     return f"{x:,.0f}"
 
 
+def _units(x, noun: str = "unit") -> str:
+    """'1 unit', '2,400 units': the count with its noun in the right number."""
+    try:
+        n = float(x)
+    except (TypeError, ValueError):
+        return f"{x} {noun}s"
+    return f"{n:,.0f} {noun}" + ("" if round(abs(n)) == 1 else "s")
+
+
 def _sized(units: float, high: str = "High", low: str = "Medium") -> str:
     return high if abs(units) >= config.HIGH_UNITS else low
 
@@ -122,9 +131,9 @@ def r01_r02_r03_demand_capture(p: SkuPosition) -> list[Finding]:
                 evidence={"source_system": system, "demand_line": label, "source_qty": qty,
                           "odi_demand": p.odi_demand, "total_demand": p.demand},
                 recommendation=(
-                    f"{system} has {label} for {_fmt(qty)} units, but the ODI batch mapping has no row for it, so "
+                    f"{system} has {label} for {_units(qty)}, but the ODI batch mapping has no row for it, so "
                     f"MIPS and the work order never see this demand. Re-send it through ODI and add its "
-                    f"{_fmt(qty)} units to the work order, or the customer is short."),
+                    f"{_units(qty)} to the work order, or the customer is short."),
                 severity=_sized(qty), systems=[system, "ODI", "MIPS"]))
         elif _differs(entry.qty, qty):
             diff = qty - entry.qty
@@ -134,7 +143,7 @@ def r01_r02_r03_demand_capture(p: SkuPosition) -> list[Finding]:
                 evidence={"source_system": system, "demand_line": label, "source_qty": qty, "odi_qty": entry.qty,
                           "odi_entry": entry.entry_id, "mips_demand": p.mips_demand, "demand_left": p.demand_left},
                 recommendation=(
-                    f"{system} has {label} at {_fmt(qty)} units, but ODI still maps {_fmt(entry.qty)} "
+                    f"{system} has {label} at {_units(qty)}, but ODI still maps {_fmt(entry.qty)} "
                     f"({diff:+,.0f}): the change never reached ODI. Set the ODI row {entry.entry_id} to {_fmt(qty)}"
                     + (f". MIPS already plans the current {_fmt(p.demand_left)} demand left, so only the ODI copy "
                        f"and the batches mapped to it are wrong." if mips_current else
@@ -152,8 +161,8 @@ def r01_r02_r03_demand_capture(p: SkuPosition) -> list[Finding]:
                 evidence={"odi_entry": e.entry_id, "demand_line": what, "odi_qty": e.qty, "source_system": source,
                           "work_order": e.wo or None},
                 recommendation=(
-                    f"ODI row {e.entry_id} maps {what} for {_fmt(e.qty)} units, but {source} no longer has it "
-                    f"(cancelled or deleted). The {_fmt(e.qty)} units are over-production if MIPS keeps planning "
+                    f"ODI row {e.entry_id} maps {what} for {_units(e.qty)}, but {source} no longer has it "
+                    f"(cancelled or deleted). The {_units(e.qty)} are over-production if MIPS keeps planning "
                     f"them: remove the ODI row and take the units off the work order."),
                 severity=_sized(e.qty), systems=[source, "ODI", "MIPS"]))
     return out
@@ -173,7 +182,7 @@ def r04_mips_demand(p: SkuPosition) -> list[Finding]:
                  f"{_fmt(abs(p.odi_demand - p.demand))} {'short of' if p.odi_demand < p.demand else 'above'} BUSS "
                  f"and Oracle. Correct the ODI mapping first; then ")
     elif not _differs(p.mips_demand, p.demand):
-        cause = f"MIPS did not remove the {_fmt(p.allocated)} units WMS has already allocated to orders. "
+        cause = f"MIPS did not remove the {_units(p.allocated)} WMS has already allocated to orders. "
     else:
         cause = ""
     return [Finding(
@@ -199,12 +208,12 @@ def r05_work_order_size(p: SkuPosition) -> list[Finding]:
                f"production is needed. Cancel work order {wos} or cut it to 0")
     elif p.available and not _differs(p.wo_qty, p.demand_left):
         why = (f"MIPS sized the work order to the {_fmt(p.demand_left)} demand left and did not subtract the "
-               f"{_fmt(p.available)} units available in WMS. Cut work order {wos} to {_fmt(p.shortfall)}")
+               f"{_units(p.available)} available in WMS. Cut work order {wos} to {_fmt(p.shortfall)}")
     elif not _differs(p.wo_qty, p.demand):
         why = (f"MIPS sized the work order to the full {_fmt(p.demand)} demand, ignoring the {_fmt(p.allocated)} "
                f"allocated and {_fmt(p.available)} available in WMS. Set work order {wos} to {_fmt(p.shortfall)}")
     elif units > 0:
-        why = f"Raise work order {wos} to {_fmt(p.shortfall)}, or {_fmt(units)} units of demand go unfilled"
+        why = f"Raise work order {wos} to {_fmt(p.shortfall)}, or {_units(units)} of demand go unfilled"
     else:
         why = f"Cut work order {wos} to {_fmt(p.shortfall)}; as planned it makes {_fmt(-units)} too many"
     return [Finding(
@@ -226,8 +235,8 @@ def r06_missing_work_order(p: SkuPosition) -> list[Finding]:
         evidence={"total_demand": p.demand, "wms_allocated": p.allocated, "wms_available": p.available,
                   "shortfall": p.shortfall, "odi_work_orders": ", ".join(sorted(p.odi_wo_qty)) or None},
         recommendation=(
-            f"Demand needs {_fmt(p.shortfall)} more units ({_equation(p)}), but MIPS has no work order for "
-            f"{p.sku}. Create a work order for {_fmt(p.shortfall)} units, or the orders ship short."),
+            f"Demand needs {_units(p.shortfall, 'more unit')} ({_equation(p)}), but MIPS has no work order for "
+            f"{p.sku}. Create a work order for {_units(p.shortfall)}, or the orders ship short."),
         severity="High", systems=["MIPS", "ODI"])]
 
 
@@ -256,7 +265,7 @@ def r07_odi_work_order(p: SkuPosition) -> list[Finding]:
                           "mips_work_orders": ", ".join(p.wo_numbers) or None},
                 recommendation=(
                     f"ODI maps {len(rows)} demand {'line' if len(rows) == 1 else 'lines'} to work order {wo} "
-                    f"({_fmt(odi_qty)} units), but MIPS has no such work order. Production and batches follow "
+                    f"({_units(odi_qty)}), but MIPS has no such work order. Production and batches follow "
                     f"MIPS: re-link the ODI rows to the MIPS work order, or restore it in MIPS."),
                 severity="Medium", systems=["MIPS", "ODI"]))
             continue
@@ -293,8 +302,8 @@ def r08_uncovered_lines(p: SkuPosition) -> list[Finding]:
             evidence={"odi_entry": e.entry_id, "demand_line": what, "odi_qty": e.qty, "allocated": e.allocated,
                       "mips_work_orders": ", ".join(p.wo_numbers) or None},
             recommendation=(
-                f"ODI row {e.entry_id} ({what}, {_fmt(e.qty)} units) has {_fmt(e.allocated)} allocated and no work "
-                f"order, so {_fmt(gap)} units are neither in stock nor in production. "
+                f"ODI row {e.entry_id} ({what}, {_units(e.qty)}) has {_fmt(e.allocated)} allocated and no work "
+                f"order, so {_units(gap)} are neither in stock nor in production. "
                 + (f"Link the row to work order {p.wo_numbers[0]}." if len(p.wo_numbers) == 1 else
                    "Allocate WMS stock to it or link it to a work order.")),
             severity=_sized(gap), systems=["ODI", "MIPS", "WMS"]))
@@ -311,7 +320,7 @@ def r09_allocation(p: SkuPosition) -> list[Finding]:
         evidence={"wms_allocated": p.allocated, "odi_allocated": p.odi_allocated,
                   "odi_allocated_lines": lines or None},
         recommendation=(
-            f"WMS has {_fmt(p.allocated)} units allocated to orders, but the ODI mapping shows "
+            f"WMS has {_units(p.allocated)} allocated to orders, but the ODI mapping shows "
             f"{_fmt(p.odi_allocated)} ({diff:+,.0f}). WMS holds all on-hand stock, so it is the reference: update "
             f"the ODI allocation for the order WMS reserved, then re-check the MIPS demand."),
         severity="Medium", systems=["WMS", "ODI", "MIPS"])]
@@ -391,7 +400,7 @@ def r12_late_wrap(p: SkuPosition) -> list[Finding]:
                       "orders": ", ".join(e.ref for e in rows)},
             recommendation=(
                 f"Work order {wo} finished wrapping {wrapped:%m/%d %H:%M}, after the requested ship date of "
-                f"{len(rows)} {'order' if len(rows) == 1 else 'orders'} (earliest {first:%m/%d}; {_fmt(units)} units). "
+                f"{len(rows)} {'order' if len(rows) == 1 else 'orders'} (earliest {first:%m/%d}; {_units(units)}). "
                 f"Finished goods must reach WMS before the ship date: move the run earlier or agree a new ship date "
                 f"with the customers."),
             severity=_sized(units), systems=["ODI", "MIPS", "WMS"]))
