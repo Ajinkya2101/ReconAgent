@@ -6,6 +6,19 @@ and the project uses [Semantic Versioning](https://semver.org/). The version liv
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-10
+
+The business team's 9 Nov data model (v3) replaces the five-extract model (v2), and `main` now holds it
+as the only data schema. See [docs/engineering/REPOSITORY_HISTORY.md](docs/engineering/REPOSITORY_HISTORY.md)
+for the overwrite of `main` and the deleted branches.
+
+**Upgrading from 0.2.0** (breaking):
+- The agent reads one workbook, `BIMBO_MIPS_WMS_ODI_Data*.xlsx`, anywhere under `data/`. The five daily
+  extracts are no longer read.
+- Event contract v4: an existing event log is recreated empty on first start. Publish the seed again
+  (`python -m recon_agent events seed --reset`) and clear planner decisions made on v2 flags.
+- Rules are R01-R13 (was R01-R19); flag IDs from 0.2.0 do not carry over.
+
 ### Changed: the docs folder, by audience
 - `docs/data-model/` (data model, event contract, data inconsistencies), `docs/guides/` (user and
   systems guides, screenshots), `docs/engineering/` (technical overview, deployment, repository

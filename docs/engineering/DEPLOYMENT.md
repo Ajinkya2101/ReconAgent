@@ -28,12 +28,12 @@ Needs Docker Engine 24+ with Compose v2, and the five daily extracts.
 
 ```bash
 git clone https://github.com/Ajinkya2101/ReconAgent.git && cd ReconAgent
-git checkout v0.2.0                     # deploy a release tag, not main
+git checkout v0.3.0                     # deploy a release tag, not main
 cp .env.example .env                    # then edit it (section 3)
 mkdir -p data && cp /path/to/extracts/*.xlsx data/
-docker compose up -d --build            # or set RECON_VERSION=0.2.0 and `docker compose pull` (section 6)
+docker compose up -d --build            # or set RECON_VERSION=0.3.0 and `docker compose pull` (section 6)
 docker compose logs worklist            # the demo account passwords, printed once on the first start
-curl -s http://127.0.0.1:8000/healthz   # {"status":"ok","version":"0.2.0",...}
+curl -s http://127.0.0.1:8000/healthz   # {"status":"ok","version":"0.3.0",...}
 ```
 
 The worklist listens on `127.0.0.1:8000` only. To serve it to other people, put HTTPS in front (section 4).
@@ -101,6 +101,9 @@ On Windows with `start_container.bat`: `start_container.bat users list`, `start_
 ## 6. Versions and releases
 
 The version is `__version__` in [recon_agent/__init__.py](../../recon_agent/__init__.py), following [Semantic Versioning](https://semver.org/): MAJOR for changes that break a deployment (renamed variables, state file formats), MINOR for features, PATCH for fixes. Every change goes in [CHANGELOG.md](../../CHANGELOG.md) under `[Unreleased]`.
+
+`main` is the only long-lived branch ([REPOSITORY_HISTORY.md](REPOSITORY_HISTORY.md)). Work in progress goes on a
+short-lived branch that is merged to `main` and then deleted.
 
 To release:
 
