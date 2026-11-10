@@ -48,6 +48,7 @@ it back as a long-lived branch).
 | 0.3.0 | 2026-11-10 | the commit tagged `v0.3.0` | `v0.3.0` | v3, event contract v4 |
 | 0.3.1 | 2026-11-10 | the commit tagged `v0.3.1` | `v0.3.1` | v3, event contract v4 |
 | 0.4.0 | 2026-11-10 | the commit tagged `v0.4.0` | `v0.4.0` | v3, event contract v4; ML layer with history |
+| 0.5.0 | 2026-11-10 | the commit tagged `v0.5.0` | `v0.5.0` | as 0.4.0; six seeded SKUs, five with discrepancies |
 
 0.2.0 is left untagged on purpose: pushing a `v0.2.0` tag now would start the Release workflow and
 publish an old image as `latest`.
